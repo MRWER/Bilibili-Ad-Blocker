@@ -1,4 +1,5 @@
-# 项目结构
+## 项目结构
+```text
 Bilibili-Ad-Blocker/
 ├── icons/                   # 插件图标文件夹
 │   ├── icon16.png
@@ -10,3 +11,4 @@ Bilibili-Ad-Blocker/
 ├── background.js            # 后台服务脚本，处理跨页面通信和API调用
 ├── popup.html               # 用户点击插件图标时弹出的界面
 └── popup.js                 # 弹出界面的交互逻辑
+```
