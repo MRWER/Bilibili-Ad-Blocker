@@ -1,0 +1,18 @@
+# ================= Chrome 扩展专属 =================
+*.crx                     # 打包后的插件文件
+*.pem                     # ⚠️ 绝对不要提交！私钥泄露会导致插件被恶意替换
+dist/
+build/
+package/                  # 部分 CLI 工具默认输出目录
+web-ext-artifacts/        # 若使用 web-ext 打包则忽略
+
+# ================= 通用开发/系统文件 =================
+node_modules/
+.env
+.env.local
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+.cache/
