@@ -6,15 +6,16 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
     "https://api.bilibili.com/*",
     "https://space.bilibili.com/*",
-    "https://www.bilibili.com/*"
+    "https://www.bilibili.com/*",
+    "https://*.bilibili.com/*"
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "B站广告清剿"
   },
   "background": {

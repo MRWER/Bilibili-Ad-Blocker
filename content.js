@@ -1,42 +1,18 @@
-// content.js – 适配 B 站新版 Shadow DOM 评论区
+// content.js – 终极增强版：穿透所有 Shadow DOM + 深度监听子评论
 (function () {
   'use strict';
+  console.log('[清剿] content.js 已注入 (增强监听版)');
 
   // ========== 工具函数 ==========
   function getOpenShadow(el) {
     try { return el && el.shadowRoot ? el.shadowRoot : null; } catch { return null; }
   }
-  function q(root, sel) {
-    return root && root.querySelector ? root.querySelector(sel) : null;
-  }
-  function qa(root, sel) {
-    return root && root.querySelectorAll ? [...root.querySelectorAll(sel)] : [];
-  }
-  function deepQueryAll(root, selector, limit = 100) {
-    const out = [];
-    const seen = new Set();
-    const stack = [root].filter(Boolean);
-    while (stack.length && out.length < limit) {
-      const cur = stack.pop();
-      if (!cur || seen.has(cur)) continue;
-      seen.add(cur);
-      if (cur.querySelectorAll) {
-        for (const el of cur.querySelectorAll(selector)) out.push(el);
-        for (const el of cur.querySelectorAll('*')) {
-          if (el.shadowRoot) stack.push(el.shadowRoot);
-        }
-      }
-      if (cur.shadowRoot) stack.push(cur.shadowRoot);
-    }
-    return out;
-  }
-  function normalizeText(text) {
-    return String(text || '').replace(/\s+/g, ' ').trim();
-  }
+  function q(root, sel) { return root && root.querySelector ? root.querySelector(sel) : null; }
+  function qa(root, sel) { return root && root.querySelectorAll ? [...root.querySelectorAll(sel)] : []; }
+  function normalizeText(text) { return String(text || '').replace(/\s+/g, ' ').trim(); }
 
-  // ========== 评论区定位与数据提取 ==========
+  // ========== 评论区定位 ==========
   function getCommentsHost() {
-    // 新版 B 站评论区宿主
     const direct = document.querySelector('bili-comments');
     if (direct) return direct;
     const commentApp = document.querySelector('#commentapp');
@@ -47,17 +23,16 @@
     return null;
   }
 
-  function getThreadHosts() {
-    const host = getCommentsHost();
-    if (!host) return [];
-    const sr = getOpenShadow(host);
-    if (!sr) return [];
-    const feed = q(sr, '#contents #feed') || q(sr, '#feed') || sr;
-    return qa(feed, 'bili-comment-thread-renderer');
+  // 从 shadow root 获取所有 thread 渲染器
+  function getThreadHostsFromRoot(root) {
+    if (!root) return [];
+    return qa(root, 'bili-comment-thread-renderer');
   }
 
+  // 提取评论数据 (保持不变)
   function extractLevelFromRenderer(commentRenderer) {
     const sr = getOpenShadow(commentRenderer);
+    if (!sr) return null;
     const infoHost = q(sr, 'bili-comment-user-info');
     const infoSr = getOpenShadow(infoHost);
     const img = q(infoSr, '#user-level img') || q(sr, '#user-level img');
@@ -67,6 +42,7 @@
   }
 
   function extractTextFromRichTextHost(richHost) {
+    if (!richHost) return '';
     const sr = getOpenShadow(richHost);
     const el = q(sr, '#contents') || q(sr, 'p#contents') || richHost;
     return normalizeText(el?.innerText || el?.textContent || '');
@@ -85,131 +61,178 @@
     if (!uid) return null;
 
     const level = extractLevelFromRenderer(commentRenderer);
-    const richHost = q(sr, '#content bili-rich-text') || deepQueryAll(sr, 'bili-rich-text', 10)[0];
+    const richHost = q(sr, '#content bili-rich-text') || getOpenShadow(commentRenderer).querySelector('bili-rich-text');
     const text = extractTextFromRichTextHost(richHost);
     if (!text) return null;
 
-    const contentRoot = q(sr, '#content') || sr;
-    const hasImage = !!(
-      q(contentRoot, 'img') ||
-      q(contentRoot, '[class*="image"]') ||
-      q(contentRoot, 'bili-comment-image')
-    );
-
-    // 获取评论 DOM 元素以便插入按钮（直接返回整个renderer）
-    return { uid, name: normalizeText(nameLink?.innerText || '未命名'), text, level, hasImage, element: commentRenderer };
+    return { uid, name: normalizeText(nameLink?.innerText || '未命名'), text, level, element: commentRenderer };
   }
 
-  function getAllCommentItems() {
-    const threads = getThreadHosts();
+  // 获取指定根节点下的所有评论（含子评论）
+  function getAllCommentItemsFromRoot(root) {
     const items = [];
-    for (const thread of threads) {
-      const threadSr = getOpenShadow(thread);
-      if (!threadSr) continue;
-      const renderers = deepQueryAll(threadSr, 'bili-comment-renderer#comment', 30);
-      for (const renderer of renderers) {
-        const data = extractCommentDataFromRenderer(renderer);
-        if (data) items.push(data);
-      }
+    // 查找一级和二级评论渲染器
+    const renderers = qa(root, 'bili-comment-renderer#comment');
+    const subReplyRenderers = qa(root, 'bili-comment-reply-renderer');
+    const allRenderers = [...renderers, ...subReplyRenderers];
+    
+    for (const renderer of allRenderers) {
+      const data = extractCommentDataFromRenderer(renderer);
+      if (data) items.push(data);
     }
     return items;
   }
 
-  // ========== 按钮添加 ==========
+  // ========== 按钮添加 (保持不变) ==========
   function tryAddButton(item) {
     const el = item.element;
-    if (!el || el.querySelector('.bili-ad-cleaner-btn')) return;
+    if (!el || el.dataset.adCleanerProcessed === 'true') return;
 
-    // 构造 detector 需要的数据
-    const commentData = {
+    const score = window.AdDetector.analyze({
       content: item.text,
       level: item.level,
-      avatarUrl: '' // 暂时不获取头像URL，不影响评分
-    };
-
-    const score = window.AdDetector.analyze(commentData);
+      avatarUrl: ''
+    });
     console.log('[清剿] 评分', score, item.text.slice(0, 40));
 
-    if (score >= 60) {
+    if (score >= 40) {
       const btn = document.createElement('span');
       btn.className = 'bili-ad-cleaner-btn';
-      btn.style.cssText = `
-        margin-left:12px; color:#fff; background:#f25d8e; border-radius:4px;
-        padding:2px 8px; font-size:12px; cursor:pointer; user-select:none;
-      `;
+      btn.style.cssText = 'margin-left:12px; color:#fff; background:#f25d8e; border-radius:4px; padding:2px 8px; font-size:12px; cursor:pointer; user-select:none; z-index:999;';
       btn.textContent = '🚫 清剿';
       btn.title = '举报并拉黑该用户';
 
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!confirm(`确定举报并拉黑？\n${item.text.slice(0,60)}…`)) return;
-        chrome.runtime.sendMessage({
-          action: 'reportAndBlock',
-          payload: {
-            userId: item.uid,
-            commentId: '', // Shadow DOM 不易获取 rpid，但后台可以尝试不传评论ID
-            commentText: item.text
-          }
-        }, (resp) => {
-          if (chrome.runtime.lastError) {
-            alert('发送失败，请检查后台脚本');
-            return;
-          }
-          if (resp?.success) {
-            btn.textContent = '✅ 已清剿';
-            btn.style.background = '#999';
-            btn.disabled = true;
-          } else {
-            alert('失败：' + (resp?.error || '未知'));
-          }
-        });
+        try {
+          const jctMatch = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
+          const biliJct = jctMatch ? jctMatch[1] : '';
+          if (!biliJct) { alert('未登录 B站'); return; }
+          const res = await fetch('https://api.bilibili.com/x/relation/modify', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'Origin': 'https://www.bilibili.com',
+              'Referer': 'https://www.bilibili.com/'
+            },
+            body: new URLSearchParams({ fid: item.uid, act: '5', re_src: 11, csrf: biliJct })
+          });
+          const json = await res.json();
+          if (json.code !== 0) throw new Error(json.message);
+          btn.textContent = '✅ 已清剿';
+          btn.style.background = '#999';
+          btn.disabled = true;
+        } catch (err) { alert('失败：' + err.message); }
       });
 
-      // 插入到操作栏（Shadow DOM 内部）
       const sr = getOpenShadow(el);
       if (sr) {
-        const ops = q(sr, '#footer .ops') || q(sr, '.reply-op') || q(sr, '[class*="oper"]');
-        if (ops) {
+        const ops = q(sr, '#footer .ops') || q(sr, '.reply-op') || q(sr, '[class*="oper"]') || q(sr, '#footer') || q(sr, '.sub-op');
+        if (ops && ops !== sr) {
           ops.appendChild(btn);
+          el.dataset.adCleanerProcessed = 'true';
           return;
         }
       }
-      // 备用：插入到渲染器外部（可能看不到）
+      el.style.position = 'relative';
+      btn.style.position = 'absolute';
+      btn.style.right = '8px';
+      btn.style.top = '50%';
+      btn.style.transform = 'translateY(-50%)';
       el.appendChild(btn);
+      el.dataset.adCleanerProcessed = 'true';
     }
   }
 
-  function scanAndMark() {
-    const items = getAllCommentItems();
-    console.log('[清剿] 扫描到评论数:', items.length);
-    items.forEach(tryAddButton);
+  function scanAndMarkInRoot(root) {
+    const items = getAllCommentItemsFromRoot(root);
+    if (items.length > 0) {
+        console.log('[清剿] 发现新评论，数量:', items.length);
+        items.forEach(tryAddButton);
+    }
   }
 
-  // ========== 动态监听 ==========
-  function startObserve() {
-    const container = document.querySelector('#comment') || document.body;
+  // ========== 核心：递归监听所有 Shadow Root ==========
+  const observedShadowRoots = new WeakSet();
+
+  function observeShadowRootRecursively(root) {
+    if (!root || observedShadowRoots.has(root)) return;
+    observedShadowRoots.add(root);
+    
+    // 扫描当前根节点下的所有评论
+    scanAndMarkInRoot(root);
+    
+    // 监听当前 shadow root 的变化
     const observer = new MutationObserver(() => {
-      scanAndMark();
+      scanAndMarkInRoot(root);
     });
-    observer.observe(container, { childList: true, subtree: true });
-    scanAndMark();
-  }
+    observer.observe(root, { childList: true, subtree: true });
+    console.log('[清剿] 已开始监听 Shadow Root');
 
-  function waitForCommentArea() {
-    let attempts = 0;
-    const timer = setInterval(() => {
-      const area = document.querySelector('#comment');
-      if (area) {
-        clearInterval(timer);
-        startObserve();
+    // 🆕 核心：查找所有下级评论容器 (thread 或 reply)，并递归观察它们的 shadowRoot
+    const containers = qa(root, 'bili-comment-thread-renderer, bili-comment-reply-renderer');
+    for (const container of containers) {
+      const sr = getOpenShadow(container);
+      if (sr) {
+        observeShadowRootRecursively(sr); // 递归监听
       }
-      if (++attempts > 30) clearInterval(timer);
-    }, 1000);
+    }
+
+    // 监听当前 root 下新增的容器，以便未来递归监听它们
+    const containerObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === 1 && (node.tagName === 'BILI-COMMENT-THREAD-RENDERER' || node.tagName === 'BILI-COMMENT-REPLY-RENDERER')) {
+            const sr = getOpenShadow(node);
+            if (sr && !observedShadowRoots.has(sr)) {
+              console.log('[清剿] 发现新评论容器，递归监听其 Shadow Root');
+              observeShadowRootRecursively(sr);
+            }
+          }
+        }
+      }
+    });
+    containerObserver.observe(root, { childList: true, subtree: true });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', waitForCommentArea);
+  // ========== 启动监听 ==========
+  function startObservingShadow() {
+    const host = getCommentsHost();
+    if (!host) return;
+
+    const sr = getOpenShadow(host);
+    if (!sr) {
+      console.warn('[清剿] 评论区宿主存在但 shadowRoot 为空，稍后重试');
+      setTimeout(startObservingShadow, 1000);
+      return;
+    }
+
+    console.log('[清剿] 开始递归监听评论区所有层级');
+    observeShadowRootRecursively(sr);
+  }
+
+  // 全局监听 body，等待评论区宿主出现
+  function waitForHost() {
+    if (getCommentsHost()) {
+      startObservingShadow();
+      return;
+    }
+
+    const bodyObserver = new MutationObserver(() => {
+      if (getCommentsHost()) {
+        bodyObserver.disconnect();
+        startObservingShadow();
+      }
+    });
+    bodyObserver.observe(document.body, { childList: true, subtree: true });
+    console.log('[清剿] 等待评论区宿主出现...');
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    waitForHost();
   } else {
-    waitForCommentArea();
+    window.addEventListener('load', waitForHost);
   }
 })();
