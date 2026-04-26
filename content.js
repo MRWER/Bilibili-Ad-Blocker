@@ -1,7 +1,7 @@
-// content.js – 最终完整版（自动清剿 + 等级保护 + 按钮引用更新）
+// content.js – 重构版（队列独立管理，防并发冲突）
 (function () {
   'use strict';
-  console.log('[清剿] content.js 已注入 (最终版)');
+  console.log('[清剿] content.js 已注入 (重构版)');
 
   const COMMENT_SHADOW_HOST_SELECTOR = [
     'bili-comment-thread-renderer',
@@ -119,22 +119,16 @@
     ];
     for (const candidate of candidates) {
       const level = Number(candidate);
-      if (Number.isFinite(level) && level > 0 && level <= 6) {
-        return level;
-      }
+      if (Number.isFinite(level) && level > 0 && level <= 6) return level;
     }
     if (commentData?.member?.is_hardcore_vip === true || 
-        commentData?.member?.is_hardcore_vip === 1) {
-      return 6;
-    }
+        commentData?.member?.is_hardcore_vip === 1) return 6;
     return null;
   }
 
   function extractLevelFromRenderer(commentRenderer) {
     const dataLevel = extractLevelFromData(getCommentData(commentRenderer));
-    if (dataLevel != null) {
-      return dataLevel;
-    }
+    if (dataLevel != null) return dataLevel;
     const sr = getOpenShadow(commentRenderer);
     if (!sr) return null;
     
@@ -160,7 +154,6 @@
         }
       }
     }
-    // 全局搜索等级图标
     const allImgs = qa(sr, 'img[src*="level"], img[class*="level"]');
     for (const img of allImgs) {
       const imgSrc = img.getAttribute('src') || '';
@@ -327,6 +320,7 @@
     el.appendChild(btn);
   }
 
+  // ========== 清剿按钮与队列管理 ==========
   function tryAddButton(item) {
     const el = item.element;
     if (!el) return;
@@ -337,15 +331,8 @@
     const alreadyBlocked = el.dataset.adBlocked === 'true';
     
     let score = 0;
-    if (isUserMarked) {
-      score = 100;
-    } else {
-      score = window.AdDetector.analyze({ 
-        content: item.text, 
-        level: item.level, 
-        avatarUrl: '' 
-      });
-    }
+    if (isUserMarked) score = 100;
+    else score = window.AdDetector.analyze({ content: item.text, level: item.level, avatarUrl: '' });
     
     const rawLevel = item.level;
     const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
@@ -367,6 +354,17 @@
           alert(`⚠️ ${reason}\n已跳过自动拉黑，请手动举报（右键评论 -> 举报）。`);
           return;
         }
+
+        // 自动清剿开启时，禁止手动清剿队列中的账号
+        if (autoCleanActive && autoCleanQueue.some(q => q.uid === item.uid)) {
+          alert('该账号已经在自动清剿队列中，无需手动操作。');
+          return;
+        }
+
+        // 手动清剿：先从队列中移除以防并发
+        removeFromAutoCleanQueue(item.uid);
+
+        // 执行拉黑
         try {
           const jctMatch = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
           const biliJct = jctMatch ? jctMatch[1] : '';
@@ -389,21 +387,22 @@
       
       if (mountButtonToComment(item, btn)) {
         el.dataset.adCleanerProcessed = 'true';
-        item.cleanerBtn = btn;   // 保存引用
+        item.cleanerBtn = btn;
       } else {
         el.style.position = 'relative';
         btn.style.position = 'absolute'; btn.style.right = '8px'; btn.style.top = '50%'; btn.style.transform = 'translateY(-50%)';
         el.appendChild(btn);
         el.dataset.adCleanerProcessed = 'true';
-        item.cleanerBtn = btn;   // 保存引用
-      }
-      
-      // 自动入队逻辑
-      if (autoCleanActive && !isHighLevel && !alreadyBlocked) {
-        enqueueAutoClean(item);
+        item.cleanerBtn = btn;
       }
     }
     
+    // 无条件将低等级未拉黑账号加入队列（为自动清剿准备）
+    if (!isHighLevel && !alreadyBlocked && !el.dataset.adBlocked) {
+      enqueueAutoClean(item);
+    }
+
+    // 标记按钮
     const alreadyHasMark = el.dataset.markBtnAdded === 'true';
     if (!alreadyHasMark && !isUserMarked) {
       addMarkButton(item, el);
@@ -416,6 +415,14 @@
     autoCleanQueue.push(item);
     updateAutoCleanPanel();
     console.log('[清剿] 自动入队:', item.name, '(Lv' + item.level + ')');
+  }
+
+  function removeFromAutoCleanQueue(uid) {
+    const index = autoCleanQueue.findIndex(q => q.uid === uid);
+    if (index !== -1) {
+      autoCleanQueue.splice(index, 1);
+      updateAutoCleanPanel();
+    }
   }
 
   function buildAutoCleanPanel() {
@@ -457,15 +464,12 @@
         `当前：${current.name} (Lv${current.level ?? '?'})` : 
         '队列已空，等待新评论...';
     }
-    autoCleanPanel.style.display = 'block';
+    autoCleanPanel.style.display = autoCleanActive ? 'block' : 'none';
   }
 
   async function processAutoCleanQueue() {
     if (!autoCleanActive || autoCleanQueue.length === 0) {
       updateAutoCleanPanel();
-      if (autoCleanActive && autoCleanPanel) {
-        autoCleanPanel.style.display = 'block';
-      }
       return;
     }
     const item = autoCleanQueue[0];
@@ -481,12 +485,25 @@
       });
       const json = await res.json();
       if (json.code !== 0) throw new Error(json.message);
-      if (item.element) item.element.dataset.adBlocked = 'true';
+      // 更新按钮状态（通过引用或备用查找）
       if (item.cleanerBtn) {
         item.cleanerBtn.textContent = '✅ 已清剿';
         item.cleanerBtn.style.background = '#999';
         item.cleanerBtn.style.pointerEvents = 'none';
+      } else if (item.element) {
+        // 备用查找
+        const actionHost = item.actionHost || item.element;
+        const sr = getOpenShadow(actionHost);
+        if (sr) {
+          const cleaner = sr.querySelector('.bili-ad-cleaner-btn');
+          if (cleaner) {
+            cleaner.textContent = '✅ 已清剿';
+            cleaner.style.background = '#999';
+            cleaner.style.pointerEvents = 'none';
+          }
+        }
       }
+      if (item.element) item.element.dataset.adBlocked = 'true';
       console.log('[清剿] 自动清剿成功:', item.name);
       autoCleanQueue.shift();
       updateAutoCleanPanel();
@@ -497,7 +514,7 @@
     }
   }
 
-  // 扫描现有符合条件的评论并加入队列
+  // 扫描已存在的评论并加入队列（补漏）
   function addExistingItemsToQueue() {
     const items = getAllCommentItems();
     for (const item of items) {
@@ -518,16 +535,16 @@
     buildAutoCleanPanel();
     updateAutoCleanPanel();
     autoCleanTimer = setInterval(processAutoCleanQueue, 1000);
-    addExistingItemsToQueue(); // 启动时补充现有评论
-    console.log('[清剿] 自动清剿已启动，已扫描现有评论并入库。');
+    // addExistingItemsToQueue();  // 补充现有评论
+    console.log('[清剿] 自动清剿已启动');
   }
 
   function stopAutoClean() {
     autoCleanActive = false;
     if (autoCleanTimer) { clearInterval(autoCleanTimer); autoCleanTimer = null; }
     if (autoCleanPanel) autoCleanPanel.style.display = 'none';
-    autoCleanQueue = [];
-    console.log('[清剿] 自动清剿已停止');
+    // 不清空队列，保留以实时积累
+    console.log('[清剿] 自动清剿已停止（队列保留）');
   }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
