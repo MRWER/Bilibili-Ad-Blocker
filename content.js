@@ -514,28 +514,12 @@
     }
   }
 
-  // // 扫描已存在的评论并加入队列（补漏）
-  // function addExistingItemsToQueue() {
-  //   const items = getAllCommentItems();
-  //   for (const item of items) {
-  //     const el = item.element;
-  //     if (!el) continue;
-  //     const alreadyBlocked = el.dataset.adBlocked === 'true';
-  //     const isHighLevel = (item.level === null || item.level === undefined || item.level >= 4);
-  //     const hasCleanerButton = el.dataset.adCleanerProcessed === 'true';
-  //     if (!alreadyBlocked && !isHighLevel && hasCleanerButton) {
-  //       enqueueAutoClean(item);
-  //     }
-  //   }
-  // }
-
   function startAutoClean() {
     if (autoCleanActive) return;
     autoCleanActive = true;
     buildAutoCleanPanel();
     updateAutoCleanPanel();
     autoCleanTimer = setInterval(processAutoCleanQueue, 1000);
-    // addExistingItemsToQueue();  // 补充现有评论
     console.log('[清剿] 自动清剿已启动');
   }
 
@@ -543,7 +527,6 @@
     autoCleanActive = false;
     if (autoCleanTimer) { clearInterval(autoCleanTimer); autoCleanTimer = null; }
     if (autoCleanPanel) autoCleanPanel.style.display = 'none';
-    // 不清空队列，保留以实时积累
     console.log('[清剿] 自动清剿已停止（队列保留）');
   }
 
@@ -556,10 +539,8 @@
       sendResponse({ ok: true });
     } else if (request.action === 'getAutoCleanStatus') {
       sendResponse({ active: autoCleanActive });
-    }
-    // 🆕 新增：更新词库
-    else if (request.action === 'updateKeywords') {
-      initUserKeywords();  // 重新加载 storage 中的词库并设置到 AdDetector
+    } else if (request.action === 'updateKeywords') {
+      initUserKeywords();
       sendResponse({ ok: true });
     }
   });

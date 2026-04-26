@@ -1,6 +1,5 @@
 // detector.js – 支持动态用户自定义广告词库
 const AdDetector = {
-  // 原有意图模式（与之前一致）
   intentPatterns: [
     { name: '利益诱导+行动', regex: /(免费|白嫖|领取|干货|资源|教程|方法|攻略|资料).{0,10}(私|戳|扣|加|点|看|来|滴滴|dd|关注)/i, score: 35 },
     { name: '虚假紧迫感', regex: /(名额|位置|只剩|最后|马上|快要|就要|即将|错过|再等).{0,5}(了|！|\d)/i, score: 20 },
@@ -18,10 +17,8 @@ const AdDetector = {
   ],
   highRiskKeywords: ['日赚', '兼职', '刷单', '佣金', '投注', '赌博'],
 
-  // 🆕 用户自定义广告关键词（动态加载）
   userKeywords: [],
 
-  // 🆕 设置用户词库
   setUserKeywords(keywords) {
     this.userKeywords = Array.isArray(keywords) ? [...new Set(keywords)] : [];
   },
@@ -31,17 +28,14 @@ const AdDetector = {
     const { content, level, avatarUrl } = commentData;
     const text = (content || '').trim();
 
-    // 意图模式匹配
     for (const p of this.intentPatterns) {
       if (p.regex.test(text)) score += p.score;
     }
 
-    // 高危关键词
     for (const kw of this.highRiskKeywords) {
       if (text.includes(kw)) { score += 50; break; }
     }
 
-    // 🆕 用户自定义关键词匹配（每个词 +25，最多计3个词）
     const lowerText = text.toLowerCase();
     let userHitCount = 0;
     for (const kw of this.userKeywords) {
@@ -54,7 +48,6 @@ const AdDetector = {
       score += userHitCount * 25;
     }
 
-    // 画像特征
     if (level !== undefined && level <= 2) score += 20;
     if (avatarUrl && (avatarUrl.includes('noface') || avatarUrl === '' || avatarUrl.endsWith('noFace.gif'))) score += 15;
     if (text.length > 15 && text.length < 120) score += 5;
@@ -63,34 +56,6 @@ const AdDetector = {
 
     return Math.min(score, 100);
   },
-
-  parseCommentElement(element) {
-    // 该函数在 content.js 中已不再使用，但保留兼容
-    const textEl = element.querySelector('.reply-content, .text, .reply-text');
-    const content = textEl ? textEl.innerText : '';
-
-    const userLink = element.querySelector('a.user-name, [class*="user-name"]');
-    let userId = userLink?.getAttribute('data-user-id') || userLink?.getAttribute('data-uid');
-    if (!userId) {
-      const spaceHref = element.querySelector('a[href*="space.bilibili.com"]')?.href;
-      if (spaceHref) {
-        const match = spaceHref.match(/space\.bilibili\.com\/(\d+)/);
-        if (match) userId = match[1];
-      }
-    }
-
-    let level = undefined;
-    const levelEl = element.querySelector('.level i, .user-level, [class*="level"]');
-    if (levelEl) {
-      const cm = levelEl.className.match(/level-(\d+)/);
-      if (cm) level = parseInt(cm[1]);
-    }
-
-    const avatarImg = element.querySelector('.bili-avatar-img img, .user-avatar img, img[src*="face"]');
-    const avatarUrl = avatarImg ? avatarImg.src : '';
-
-    return { content, userId, level, avatarUrl };
-  }
 };
 
 if (typeof window !== 'undefined') {
