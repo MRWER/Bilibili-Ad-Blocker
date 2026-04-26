@@ -16,6 +16,7 @@
     "https://*.bilibili.com/*"
   ],
   "action": {
+    "default_popup": "popup.html",
     "default_title": "B站广告清剿"
   },
   "background": {

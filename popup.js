@@ -1,21 +1,22 @@
-// popup.js
+// popup.js – 显示文档说明与状态检测
 document.addEventListener('DOMContentLoaded', () => {
-  // 加载已保存的值
-  chrome.storage.local.get(['sessdata', 'biliJct'], (items) => {
-    document.getElementById('sessdata').value = items.sessdata || '';
-    document.getElementById('biliJct').value = items.biliJct || '';
-  });
+  const statusEl = document.getElementById('status');
 
-  document.getElementById('save').addEventListener('click', () => {
-    const sessdata = document.getElementById('sessdata').value.trim();
-    const biliJct = document.getElementById('biliJct').value.trim();
-    chrome.storage.local.set({ sessdata, biliJct }, () => {
-      alert('保存成功！');
+  // 查询当前活动标签页的 URL，判断是否为 B站视频页
+  if (chrome.tabs && chrome.tabs.query) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0]?.url || '';
+      const isBiliVideo = /bilibili\.com\/video\//.test(url);
+
+      if (isBiliVideo) {
+        statusEl.innerHTML = '✅ <strong>已检测到 B站 视频页面</strong><br>插件正在运行，滚动到评论区即可看到按钮。';
+        statusEl.style.color = '#9df0b5';
+      } else {
+        statusEl.innerHTML = '⏸️ <strong>当前页面非 B站 视频页</strong><br>插件仅会在 <code>www.bilibili.com/video/...</code> 生效。';
+        statusEl.style.color = '#ffb86c';
+      }
     });
-  });
-
-  document.getElementById('guide').addEventListener('click', (e) => {
-    e.preventDefault();
-    alert('1. 登录B站\n2. 按F12打开控制台\n3. 进入“应用”(Application) -> Cookie -> bilibili.com\n4. 找到SESSDATA和bili_jct，复制值。\n注意：不要泄露！');
-  });
+  } else {
+    statusEl.textContent = '无法获取标签页信息。';
+  }
 });

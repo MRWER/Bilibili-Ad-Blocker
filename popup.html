@@ -3,24 +3,119 @@
 <head>
   <meta charset="utf-8">
   <style>
-    body { width: 280px; padding: 16px; font-family: sans-serif; }
-    h3 { margin-top: 0; }
-    label { display: block; margin-bottom: 8px; font-size: 13px; }
-    input { width: 100%; padding: 4px; margin-bottom: 12px; }
-    button { display: block; width: 100%; padding: 8px; background: #fb7299; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-    .note { font-size: 12px; color: #666; margin-top: 12px; }
+    body {
+      width: 340px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+      background: #1a1a24;
+      color: #e0e0e0;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: #fb7299;
+    }
+    .section {
+      margin-bottom: 18px;
+    }
+    .section-title {
+      font-weight: 700;
+      margin: 0 0 6px;
+      color: #ffffff;
+      font-size: 14px;
+    }
+    ul {
+      margin: 4px 0;
+      padding-left: 18px;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+    code {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #ffb86c;
+    }
+    .warning {
+      background: rgba(251, 114, 153, 0.15);
+      border-left: 4px solid #fb7299;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #ffc1cc;
+      margin-bottom: 12px;
+    }
+    .warning strong {
+      color: #fb7299;
+    }
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: #888;
+    }
+    a {
+      color: #8fc9ff;
+      text-decoration: none;
+    }
+    .status-line {
+      background: rgba(255,255,255,0.04);
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <h3>🔐 认证设置</h3>
-  <p>从B站Cookie中获取并填入以下字段，才能正常使用。</p>
-  <label>SESSDATA</label>
-  <input type="text" id="sessdata" placeholder="粘贴SESSDATA">
-  <label>bili_jct</label>
-  <input type="text" id="biliJct" placeholder="粘贴bili_jct">
-  <button id="save">保存</button>
-  <p class="note">⚠️ 不要泄露给他人，仅保存在本地。</p>
-  <p class="note"><a href="#" id="guide">如何获取？</a></p>
+  <h2>🛡️ B站评论区广告清剿</h2>
+
+  <div class="status-line" id="status">等待 B站 页面...</div>
+
+  <div class="section">
+    <div class="section-title">📌 功能说明</div>
+    <ul>
+      <li>自动检测 B 站视频页面评论区中的可疑广告账号</li>
+      <li>在广告评论右侧插入 <code>🚫 清剿</code> 按钮</li>
+      <li>点击按钮即可自动拉黑该用户（无需手动进入主页）</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <div class="section-title">🧠 检测能力</div>
+    <ul>
+      <li>识别“求资源、礼拿、补字母、加速器”等软广话术</li>
+      <li>结合账号等级、行为模式综合评分</li>
+      <li>支持一级评论和展开后的楼中楼（子评论）</li>
+    </ul>
+  </div>
+
+  <div class="warning">
+    <strong>⚠️ 风险提示</strong><br>
+    本插件仅用于学习与研究目的。<br>
+    使用自动化操作 B站 账号可能违反其服务条款，导致账号被限制或封禁。<br>
+    请自行评估风险，谨慎使用。<br>
+    建议使用小号测试，不要在大号上随意尝试。<br>
+    插件不会上传任何用户数据，所有操作均在本地执行。
+  </div>
+
+  <div class="section">
+    <div class="section-title">🔧 使用提示</div>
+    <ul>
+      <li>确保已登录 B 站，插件会自动获取登录信息</li>
+      <li>打开任意 B站 视频，滚动到评论区即可自动扫描</li>
+      <li>如果按钮未出现，刷新页面或展开更多评论重试</li>
+      <li>拉黑操作可能触发风控，短时间内拉黑过多会被限制</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    v1.0 | 自用研究工具 | 按 Alt+B 切换侧边栏 (如果有)
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
