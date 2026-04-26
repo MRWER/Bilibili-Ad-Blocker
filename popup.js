@@ -1,8 +1,16 @@
-// popup.js – 修复发送消息错误，支持实时自动清剿
+// popup.js – 控制自动清剿开关 + 编辑自定义词库
 document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const autoToggle = document.getElementById('autoCleanToggle');
   const autoStatus = document.getElementById('autoStatus');
+
+  // 词库编辑相关元素
+  const editBtn = document.getElementById('editKeywordsBtn');
+  const editorDiv = document.getElementById('keywordEditor');
+  const textarea = document.getElementById('keywordTextarea');
+  const saveBtn = document.getElementById('saveKeywordsBtn');
+  const cancelBtn = document.getElementById('cancelKeywordsBtn');
+
   let currentTabId = null;
 
   // 获取当前标签页并初始化
@@ -32,14 +40,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 复选框切换
+  // 自动清剿开关
   autoToggle.addEventListener('change', () => {
     if (!currentTabId) {
-      autoToggle.checked = !autoToggle.checked; // 恢复原状态
+      autoToggle.checked = !autoToggle.checked;
       alert('无法获取标签页，请尝试刷新页面后重试。');
       return;
     }
-
     const enable = autoToggle.checked;
     const action = enable ? 'startAutoClean' : 'stopAutoClean';
     chrome.tabs.sendMessage(currentTabId, { action }, (response) => {
@@ -56,5 +63,48 @@ document.addEventListener('DOMContentLoaded', () => {
         autoStatus.textContent = '❌ 操作失败：' + (response?.error || '未知错误');
       }
     });
+  });
+
+  // ========== 词库编辑功能 ==========
+  // 点击“编辑词库”按钮，显示编辑器并加载当前词库
+  editBtn.addEventListener('click', async () => {
+    editorDiv.style.display = 'block';
+    editBtn.style.display = 'none';
+
+    // 从本地存储读取用户自定义词库
+    const { userKeywords = [] } = await chrome.storage.local.get('userKeywords');
+    textarea.value = (userKeywords || []).join('\n');
+  });
+
+  // 保存词库
+  saveBtn.addEventListener('click', async () => {
+    const lines = textarea.value.trim().split(/\n/);
+    const keywords = lines
+      .map(k => k.trim())
+      .filter(k => k.length > 0);
+
+    // 保存到 storage
+    await chrome.storage.local.set({ userKeywords: keywords });
+
+    // 通知当前标签页的 content script 更新词库
+    if (currentTabId) {
+      chrome.tabs.sendMessage(currentTabId, { action: 'updateKeywords' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('更新词库通知失败:', chrome.runtime.lastError);
+        } else {
+          console.log('词库已更新，页面将重新加载识别规则。');
+        }
+      });
+    }
+
+    alert(`词库已保存，共 ${keywords.length} 个关键词。`);
+    editorDiv.style.display = 'none';
+    editBtn.style.display = 'block';
+  });
+
+  // 取消编辑
+  cancelBtn.addEventListener('click', () => {
+    editorDiv.style.display = 'none';
+    editBtn.style.display = 'block';
   });
 });

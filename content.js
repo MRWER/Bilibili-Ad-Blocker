@@ -514,20 +514,20 @@
     }
   }
 
-  // 扫描已存在的评论并加入队列（补漏）
-  function addExistingItemsToQueue() {
-    const items = getAllCommentItems();
-    for (const item of items) {
-      const el = item.element;
-      if (!el) continue;
-      const alreadyBlocked = el.dataset.adBlocked === 'true';
-      const isHighLevel = (item.level === null || item.level === undefined || item.level >= 4);
-      const hasCleanerButton = el.dataset.adCleanerProcessed === 'true';
-      if (!alreadyBlocked && !isHighLevel && hasCleanerButton) {
-        enqueueAutoClean(item);
-      }
-    }
-  }
+  // // 扫描已存在的评论并加入队列（补漏）
+  // function addExistingItemsToQueue() {
+  //   const items = getAllCommentItems();
+  //   for (const item of items) {
+  //     const el = item.element;
+  //     if (!el) continue;
+  //     const alreadyBlocked = el.dataset.adBlocked === 'true';
+  //     const isHighLevel = (item.level === null || item.level === undefined || item.level >= 4);
+  //     const hasCleanerButton = el.dataset.adCleanerProcessed === 'true';
+  //     if (!alreadyBlocked && !isHighLevel && hasCleanerButton) {
+  //       enqueueAutoClean(item);
+  //     }
+  //   }
+  // }
 
   function startAutoClean() {
     if (autoCleanActive) return;
@@ -556,6 +556,11 @@
       sendResponse({ ok: true });
     } else if (request.action === 'getAutoCleanStatus') {
       sendResponse({ active: autoCleanActive });
+    }
+    // 🆕 新增：更新词库
+    else if (request.action === 'updateKeywords') {
+      initUserKeywords();  // 重新加载 storage 中的词库并设置到 AdDetector
+      sendResponse({ ok: true });
     }
   });
 

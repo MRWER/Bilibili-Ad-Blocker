@@ -24,6 +24,8 @@
     .checkbox-wrapper input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
     .checkbox-wrapper label { cursor: pointer; font-weight: 600; }
     .auto-status { font-size: 12px; color: #9df0b5; }
+    .small-btn { background: #2b6de5; color: #fff; border: 0; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 8px; }
+    textarea { width: 100%; background: #2a2a35; color: #e0e0e0; border: 1px solid #555; border-radius: 4px; padding: 6px; font-size: 12px; resize: vertical; }
   </style>
 </head>
 <body>
@@ -63,6 +65,19 @@
     </div>
     <div class="auto-status" id="autoStatus"></div>
     <p style="font-size:11px; color:#888; margin-top:8px;">勾选后将自动拉黑所有检测到的低等级广告账号（Lv≤3），每秒一个。高等级仅提示。</p>
+  </div>
+
+  <div class="auto-box">
+    <div class="section-title">📝 自定义词库</div>
+    <button id="editKeywordsBtn" class="small-btn">编辑词库</button>
+    <div id="keywordEditor" style="display:none; margin-top:8px;">
+      <textarea id="keywordTextarea" rows="5" placeholder="一行一个关键词"></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="saveKeywordsBtn" style="background:#28a745; color:#fff; border:0; border-radius:4px; padding:6px 12px; cursor:pointer;">保存</button>
+        <button id="cancelKeywordsBtn" style="background:#6c757d; color:#fff; border:0; border-radius:4px; padding:6px 12px; cursor:pointer;">取消</button>
+      </div>
+      <p style="font-size:11px; color:#888; margin-top:6px;">一行一个关键词，保存后立即生效。修改后刷新页面也可生效。</p>
+    </div>
   </div>
 
   <div class="footer">
