@@ -4,70 +4,26 @@
   <meta charset="utf-8">
   <style>
     body {
-      width: 340px;
-      padding: 20px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 13px;
-      line-height: 1.6;
-      background: #1a1a24;
-      color: #e0e0e0;
+      width: 340px; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px; line-height: 1.6; background: #1a1a24; color: #e0e0e0;
     }
-    h2 {
-      margin: 0 0 12px;
-      font-size: 18px;
-      color: #fb7299;
-    }
-    .section {
-      margin-bottom: 18px;
-    }
-    .section-title {
-      font-weight: 700;
-      margin: 0 0 6px;
-      color: #ffffff;
-      font-size: 14px;
-    }
-    ul {
-      margin: 4px 0;
-      padding-left: 18px;
-    }
-    li {
-      margin-bottom: 4px;
-    }
-    code {
-      background: rgba(255, 255, 255, 0.08);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-family: monospace;
-      color: #ffb86c;
-    }
-    .warning {
-      background: rgba(251, 114, 153, 0.15);
-      border-left: 4px solid #fb7299;
-      padding: 10px 12px;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #ffc1cc;
-      margin-bottom: 12px;
-    }
-    .warning strong {
-      color: #fb7299;
-    }
-    .footer {
-      margin-top: 18px;
-      font-size: 11px;
-      color: #888;
-    }
-    a {
-      color: #8fc9ff;
-      text-decoration: none;
-    }
-    .status-line {
-      background: rgba(255,255,255,0.04);
-      padding: 8px 12px;
-      border-radius: 6px;
-      margin-bottom: 16px;
-      font-size: 12px;
-    }
+    h2 { margin: 0 0 12px; font-size: 18px; color: #fb7299; }
+    .section { margin-bottom: 18px; }
+    .section-title { font-weight: 700; margin: 0 0 6px; color: #ffffff; font-size: 14px; }
+    ul { margin: 4px 0; padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; color: #ffb86c; }
+    .warning { background: rgba(251,114,153,0.15); border-left: 4px solid #fb7299; padding: 10px 12px; border-radius: 6px; font-size: 12px; color: #ffc1cc; margin-bottom: 12px; }
+    .warning strong { color: #fb7299; }
+    .footer { margin-top: 18px; font-size: 11px; color: #888; }
+    a { color: #8fc9ff; text-decoration: none; }
+    .status-line { background: rgba(255,255,255,0.04); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; }
+
+    .auto-box { border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 16px; }
+    .checkbox-wrapper { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .checkbox-wrapper input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .checkbox-wrapper label { cursor: pointer; font-weight: 600; }
+    .auto-status { font-size: 12px; color: #9df0b5; }
   </style>
 </head>
 <body>
@@ -78,9 +34,9 @@
   <div class="section">
     <div class="section-title">📌 功能说明</div>
     <ul>
-      <li>自动检测 B 站视频页面评论区中的可疑广告账号</li>
+      <li>自动检测 B 站视频评论区中的可疑广告账号</li>
       <li>在广告评论右侧插入 <code>🚫 清剿</code> 按钮</li>
-      <li>点击按钮即可自动拉黑该用户（无需手动进入主页）</li>
+      <li>点击按钮即可自动拉黑该用户</li>
     </ul>
   </div>
 
@@ -89,27 +45,24 @@
     <ul>
       <li>识别“求资源、礼拿、补字母、加速器”等软广话术</li>
       <li>结合账号等级、行为模式综合评分</li>
-      <li>支持一级评论和展开后的楼中楼（子评论）</li>
+      <li>支持一级评论和展开后的楼中楼</li>
     </ul>
   </div>
 
   <div class="warning">
     <strong>⚠️ 风险提示</strong><br>
-    本插件仅用于学习与研究目的。<br>
-    使用自动化操作 B站 账号可能违反其服务条款，导致账号被限制或封禁。<br>
-    请自行评估风险，谨慎使用。<br>
-    建议使用小号测试，不要在大号上随意尝试。<br>
-    插件不会上传任何用户数据，所有操作均在本地执行。
+    本插件仅用于学习与研究目的。自动化操作可能违反 B站服务条款。<br>
+    建议使用小号测试，谨慎使用。插件不会上传任何数据。
   </div>
 
-  <div class="section">
-    <div class="section-title">🔧 使用提示</div>
-    <ul>
-      <li>确保已登录 B 站，插件会自动获取登录信息</li>
-      <li>打开任意 B站 视频，滚动到评论区即可自动扫描</li>
-      <li>如果按钮未出现，刷新页面或展开更多评论重试</li>
-      <li>拉黑操作可能触发风控，短时间内拉黑过多会被限制</li>
-    </ul>
+  <div class="auto-box">
+    <div class="section-title">⚡ 自动清剿（实验性）</div>
+    <div class="checkbox-wrapper">
+      <input type="checkbox" id="autoCleanToggle">
+      <label for="autoCleanToggle">自动执行“清剿”操作（有误伤正常低级号的风险）</label>
+    </div>
+    <div class="auto-status" id="autoStatus"></div>
+    <p style="font-size:11px; color:#888; margin-top:8px;">勾选后将自动拉黑所有检测到的低等级广告账号（Lv≤3），每秒一个。高等级仅提示。</p>
   </div>
 
   <div class="footer">
