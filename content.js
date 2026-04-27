@@ -1,7 +1,7 @@
-// content.js – 空间二次验证完整版
+// content.js – 空间二次验证完整版（修正 WBI + 修复回退逻辑）
 (function () {
   'use strict';
-  console.log('[清剿] content.js 已注入 (空间验证完整版)');
+  console.log('[清剿] content.js 已注入 (空间验证修正版)');
 
   const COMMENT_SHADOW_HOST_SELECTOR = [
     'bili-comment-thread-renderer',
@@ -25,7 +25,6 @@
 
   const profileCache = new Map();
   const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
-  // ========== 请求去重 map ==========
   const pendingProfileChecks = new Map();  // uid -> Promise
 
   // ========== 工具函数 ==========
@@ -192,7 +191,10 @@
   async function fetchWbiKeys() {
     if (wbiKeys.img_key && wbiKeys.sub_key) return wbiKeys;
     try {
-      const res = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' });
+      const res = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+        credentials: 'include',
+        headers: { 'User-Agent': navigator.userAgent, 'Referer': 'https://www.bilibili.com/' }
+      });
       const json = await res.json();
       const imgUrl = json?.data?.wbi_img?.img_url || '';
       const subUrl = json?.data?.wbi_img?.sub_url || '';
@@ -230,13 +232,14 @@
       let lNumberOfWords = (lNumberOfWords_temp2 + 1) * 16;
       let lWordArray = Array(lNumberOfWords - 1);
       let lBytePosition = 0, lByteCount = 0;
+      let lWordCount = 0;  // 声明提到 while 外部，保证后面可访问
       while (lByteCount < lMessageLength) {
-        lWordCount = (lByteCount - (lByteCount % 4)) / 4;
+        lWordCount = (lByteCount - (lByteCount % 4)) / 4;   // 修正点：声明变量并正确拼写为 lWordCount
         lBytePosition = (lByteCount % 4) * 8;
         lWordArray[lWordCount] = (lWordArray[lWordCount] | (string.charCodeAt(lByteCount) << lBytePosition));
         lByteCount++;
       }
-      lWordCount = (lByteCount - (lByteCount % 4)) / 4;
+      lWordCount = (lByteCount - (lByteCount % 4)) / 4;        // 此处 lWordCount 已在上一行声明，可复用
       lBytePosition = (lByteCount % 4) * 8;
       lWordArray[lWordCount] = lWordArray[lWordCount] | (0x80 << lBytePosition);
       lWordArray[lNumberOfWords - 2] = lMessageLength << 3;
@@ -301,22 +304,29 @@
     return (wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)).toLowerCase();
   }
 
-  function generateWbi(sortParams) {
-    const { img_key, sub_key } = wbiKeys;
-    if (!img_key || !sub_key) return '';
-    const mixinKey = (img_key + sub_key).replace(/(.{8})(.{8})(.{8})(.{8})/, (m, a, b, c, d) => {
-      return a.substring(2, 6) + b.substring(2, 6) + c.substring(2, 6) + d.substring(2, 6);
-    });
-    const query = sortParams.join('&');
-    const w_rid = md5(query + mixinKey);
-    return w_rid;
+  // 正确的 WBI 签名映射表
+  const MIXIN_KEY_ENC_TAB = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52];
+
+  // 生成正确的 mixin_key
+  function getMixinKey(orig) {
+      let temp = '';
+      MIXIN_KEY_ENC_TAB.forEach(n => temp += orig[n]);
+      return temp.slice(0, 32);
   }
 
-  // ========== 空间信息获取 ==========
-  // ========== 请求队列（节流） ==========
+  // 修正后的 WBI 签名生成
+  function generateWbi(sortedParams, wts) {
+      const { img_key, sub_key } = wbiKeys;
+      if (!img_key || !sub_key) return '';
+      const mixinKey = getMixinKey(img_key + sub_key);
+      const query = sortedParams.join('&') + '&wts=' + wts;
+      return md5(query + mixinKey);
+  }
+
+  // ========== 请求队列（节流 + 修正头部） ==========
   const fetchQueue = [];
   let fetchTimer = null;
-  const FETCH_DELAY = 1500; // 请求间隔 1.5 秒
+  const FETCH_DELAY = 1500;
 
   function enqueueFetch(url, options = {}) {
     return new Promise((resolve, reject) => {
@@ -333,15 +343,24 @@
     fetchTimer = setTimeout(async () => {
       fetchTimer = null;
       try {
-        const res = await fetch(task.url, { credentials: 'include', ...task.options });
+        const res = await fetch(task.url, {
+          credentials: 'include',
+          headers: {
+            'User-Agent': navigator.userAgent,
+            'Referer': 'https://www.bilibili.com/',
+            'Origin': 'https://www.bilibili.com',
+            'Accept': 'application/json, text/plain, */*',
+            ...(task.options.headers || {})
+          },
+          ...task.options
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         if (json.code !== 0) {
-          // 频率限制时进行重试
-          if (json.code === -412 || json.code === -509) {
+          if (json.code === -412 || json.code === -509 || json.code === -799) {
             console.warn('[清剿] 频率限制，等待后重试');
-            fetchQueue.unshift(task); // 放回队头
-            setTimeout(() => processFetchQueue(), 2000); // 等待 2 秒再处理
+            fetchQueue.unshift(task);
+            setTimeout(() => processFetchQueue(), 2000);
           } else {
             throw new Error(json.message || 'API error');
           }
@@ -351,15 +370,15 @@
       } catch (e) {
         task.reject(e);
       }
-      processFetchQueue(); // 继续处理下一个
+      processFetchQueue();
     }, FETCH_DELAY);
   }
 
-  // 修改 requestJson 调用队列
   async function requestJson(url, options) {
     return enqueueFetch(url, options);
   }
 
+  // ========== 空间信息获取 ==========
   async function fetchSpaceInfo(uid) {
     const data = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
     return { sign: normalizeText(data.sign || ''), name: data.name };
@@ -395,11 +414,19 @@
   async function fetchLatestVideo(uid) {
     try {
       await fetchWbiKeys();
-      const params = `mid=${uid}&ps=1&tid=0&pn=1&keyword=&order=pubdate`;
-      const encodedParams = new URLSearchParams(params);
-      const sortParams = Array.from(encodedParams.keys()).sort().map(k => `${k}=${encodedParams.get(k)}`);
-      const w_rid = generateWbi(sortParams);
-      const url = `https://api.bilibili.com/x/space/wbi/arc/search?mid=${uid}&ps=1&tid=0&pn=1&keyword=&order=pubdate&w_rid=${w_rid}`;
+      const wts = Math.floor(Date.now() / 1000);
+      const params = new URLSearchParams();
+      params.set('mid', uid);
+      params.set('ps', '1');
+      params.set('tid', '0');
+      params.set('pn', '1');
+      params.set('keyword', '');
+      params.set('order', 'pubdate');
+      params.set('wts', wts);
+      const sortKeys = Array.from(params.keys()).sort();
+      const sortedParams = sortKeys.map(k => `${k}=${params.get(k)}`);
+      const w_rid = generateWbi(sortedParams, wts);
+      const url = `https://api.bilibili.com/x/space/wbi/arc/search?${sortedParams.join('&')}&w_rid=${w_rid}&wts=${wts}`;
       const data = await requestJson(url);
       const vlist = data.list?.vlist || [];
       if (vlist.length === 0) return null;
@@ -420,13 +447,11 @@
     const cached = profileCache.get(uid);
     if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.result;
 
-    // 防止并发重复请求
     if (pendingProfileChecks.has(uid)) {
       return pendingProfileChecks.get(uid);
     }
 
     const promise = (async () => {
-      // 以下是原函数体，保持不变
       const details = { sign: null, dynamic: null, dynamicComments: [], video: null, empty: false };
       let isAd = false;
       try {
@@ -634,6 +659,7 @@
   }
 
   async function tryAddButton(item) {
+    console.log('[清剿] 评测评论:', item.text, '(UID:', item.uid + ')');
     const el = item.element;
     if (!el) return;
     if (!window.AdDetector || typeof window.AdDetector.analyze !== 'function') return;
@@ -654,7 +680,6 @@
 
     const rawLevel = item.level;
     const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
-    const isUnknownLevel = rawLevel === null || rawLevel === undefined;
     const hasStrongSignal = window.AdDetector.hasStrongAdSignals ? window.AdDetector.hasStrongAdSignals(item.text) : false;
     const needProfileCheck = !isHighLevel && !hasStrongSignal && !isUserMarked && score >= 40;
 
@@ -663,11 +688,7 @@
         showCleanerButton(item, el, isHighLevel, rawLevel);
         if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
       } else if (needProfileCheck) {
-        // 已经有正在进行的检测，直接跳过
         if (el.dataset.adProfilePending === 'true') return;
-        // 已经被标记为检测失败过，暂时跳过（下次刷新页面会重置）
-        if (el.dataset.adCleanerProcessed === 'error') return;
-
         el.dataset.adProfilePending = 'true';
 
         const placeholder = document.createElement('span');
@@ -676,27 +697,31 @@
         placeholder.textContent = '⏳ 检测中';
         mountButtonToComment(item, placeholder) || el.appendChild(placeholder);
 
-        checkUserProfile(item.uid).then(({ isAd, details, error }) => {
+        checkUserProfile(item.uid).then(({ isAd, error }) => {
+          console.log(`[清剿] 空间检测结果 (UID ${item.uid}):`, isAd ? '疑似广告' : '正常账号', error ? `(错误: ${error})` : '');
           if (placeholder) placeholder.remove();
           delete el.dataset.adProfilePending;
 
           if (error) {
-            console.warn('[清剿] 空间检测失败，暂时跳过该评论', error);
-            el.dataset.adCleanerProcessed = 'error'; // 避免后续重复尝试
-            // 不做其他处理，按钮不出现
+            console.warn('[清剿] 空间检测失败，回退显示清剿按钮', error);
+            // 回退：按原规则显示按钮
+            showCleanerButton(item, el, false, rawLevel);
+            if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
           } else if (isAd) {
             console.log('[清剿] 空间检测确认广告，显示按钮');
             showCleanerButton(item, el, false, rawLevel);
             if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
           } else {
             console.log('[清剿] 空间正常，取消广告标记');
-            // 正常用户，不显示清剿按钮
+            // 🔧 关键修复：标记为已处理，防止重复扫描
+            el.dataset.adCleanerProcessed = 'true';
           }
         }).catch(err => {
           if (placeholder) placeholder.remove();
           delete el.dataset.adProfilePending;
-          el.dataset.adCleanerProcessed = 'error';
-          console.error('[清剿] 空间检测异常', err);
+          console.error('[清剿] 空间检测异常，回退显示按钮', err);
+          showCleanerButton(item, el, false, rawLevel);
+          if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
         });
       }
     }
