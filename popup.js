@@ -1,4 +1,5 @@
 // popup.js – 控制自动清剿开关 + 编辑自定义词库
+// 页面加载完成后初始化弹窗状态、开关和词库编辑能力。
 document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status');
   const autoToggle = document.getElementById('autoCleanToggle');
@@ -41,6 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 自动清剿开关
+  // 切换自动清剿状态，并把操作结果同步到当前视频页。
   autoToggle.addEventListener('change', () => {
     if (!currentTabId) {
       autoToggle.checked = !autoToggle.checked;
@@ -67,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ========== 词库编辑功能 ==========
   // 点击“编辑词库”按钮，显示编辑器并加载当前词库
+  // 打开词库编辑面板，并从本地存储回填已有关键词。
   editBtn.addEventListener('click', async () => {
     editorDiv.style.display = 'block';
     editBtn.style.display = 'none';
@@ -77,6 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 保存词库
+  // 保存用户输入的关键词，并通知内容脚本刷新识别规则。
   saveBtn.addEventListener('click', async () => {
     const lines = textarea.value.trim().split(/\n/);
     const keywords = lines
@@ -103,6 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 取消编辑
+  // 关闭词库编辑面板，不保留本次未保存的修改。
   cancelBtn.addEventListener('click', () => {
     editorDiv.style.display = 'none';
     editBtn.style.display = 'block';

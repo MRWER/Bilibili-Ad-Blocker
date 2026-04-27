@@ -28,14 +28,20 @@
   const pendingProfileChecks = new Map();  // uid -> Promise
 
   // ========== 工具函数 ==========
+  // 安全获取元素的开放式 Shadow Root，避免访问异常打断流程。
   function getOpenShadow(el) {
     try { return el && el.shadowRoot ? el.shadowRoot : null; } catch { return null; }
   }
+  // 在指定根节点下查询单个元素。
   function q(root, sel) { return root && root.querySelector ? root.querySelector(sel) : null; }
+  // 在指定根节点下查询多个元素并转为数组。
   function qa(root, sel) { return root && root.querySelectorAll ? [...root.querySelectorAll(sel)] : []; }
+  // 统一清洗文本中的空白字符，便于后续匹配和比较。
   function normalizeText(text) { return String(text || '').replace(/\s+/g, ' ').trim(); }
+  // 获取元素标签名，并统一转换为大写格式。
   function getTagName(el) { return el?.tagName ? String(el.tagName).toUpperCase() : ''; }
 
+  // 尝试从评论组件实例或挂载数据中提取原始评论数据。
   function getCommentData(el) {
     if (!el) return null;
     const vueInstance = el.__vue__ || el._vue__ || el.__vue_app__ || el._data || null;
@@ -44,6 +50,7 @@
     return null;
   }
 
+  // 从文本中拆解可学习的中文词、英文词和链接片段关键词。
   function extractKeywords(text) {
     if (!text) return [];
     const normalized = normalizeText(text);
@@ -89,6 +96,7 @@
     return null;
   }
 
+  // 从评论数据对象中提取用户等级，兼容多种字段结构。
   function extractLevelFromData(commentData) {
     if (!commentData) return null;
     const candidates = [commentData?.member?.level_info?.current_level, commentData?.member?.level_info?.currentLevel, commentData?.reply_control?.user_level, commentData?.member?.level, commentData?.user_level, commentData?.level, commentData?.info?.level, commentData?.info?.level_info?.current_level, commentData?.content?.member?.level_info?.current_level];
@@ -100,6 +108,7 @@
     return null;
   }
 
+  // 优先从渲染节点和等级图标中推断评论用户等级。
   function extractLevelFromRenderer(commentRenderer) {
     const dataLevel = extractLevelFromData(getCommentData(commentRenderer));
     if (dataLevel != null) return dataLevel;
@@ -134,6 +143,7 @@
     return null;
   }
 
+  // 从富文本评论宿主中提取最终显示给用户的评论文本。
   function extractTextFromRichTextHost(richHost) {
     if (!richHost) return '';
     const sr = getOpenShadow(richHost);
@@ -141,6 +151,7 @@
     return normalizeText(el?.innerText || el?.textContent || '');
   }
 
+  // 统一把不同类型的评论节点解析为实际评论渲染节点。
   function resolveCommentRenderer(target) {
     if (!target) return null;
     const tag = getTagName(target);
@@ -152,6 +163,7 @@
     return null;
   }
 
+  // 从评论节点中组装后续识别与操作所需的完整评论信息。
   function extractCommentDataFromTarget(target) {
     const renderer = resolveCommentRenderer(target);
     if (!renderer) return null;
@@ -188,6 +200,7 @@
 
   // ========== WBI 签名相关 ==========
   let wbiKeys = { img_key: '', sub_key: '' };
+  // 获取 B 站接口调用需要的 WBI 签名密钥。
   async function fetchWbiKeys() {
     if (wbiKeys.img_key && wbiKeys.sub_key) return wbiKeys;
     try {
@@ -206,6 +219,7 @@
     return wbiKeys;
   }
 
+  // 计算请求签名使用的 MD5 值，内部包含所需的位运算辅助函数。
   function md5(string) {
     function rotateLeft(lValue, iShiftBits) { return (lValue << iShiftBits) | (lValue >>> (32 - iShiftBits)); }
     function addUnsigned(lX, lY) {
@@ -328,6 +342,7 @@
   let fetchTimer = null;
   const FETCH_DELAY = 1500;
 
+  // 将请求压入节流队列，避免短时间内触发过多接口调用。
   function enqueueFetch(url, options = {}) {
     return new Promise((resolve, reject) => {
       fetchQueue.push({ url, options, resolve, reject });
@@ -335,6 +350,7 @@
     });
   }
 
+  // 按固定间隔依次处理请求队列，并处理频率限制重试。
   function processFetchQueue() {
     if (fetchTimer) return;
     if (fetchQueue.length === 0) return;
@@ -374,11 +390,13 @@
     }, FETCH_DELAY);
   }
 
+  // 统一通过节流队列发起并返回 JSON 请求结果。
   async function requestJson(url, options) {
     return enqueueFetch(url, options);
   }
 
   // ========== 空间信息获取 ==========
+  // 获取用户空间基础资料和活跃度统计信息。
   async function fetchSpaceInfo(uid) {
     const data = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
     return {
@@ -392,6 +410,7 @@
     };
   }
 
+  // 获取用户置顶或最新动态，并附带动态类型概览。
   async function fetchLatestDynamic(uid) {
     try {
       const data = await requestJson(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${uid}`);
@@ -419,6 +438,7 @@
     }
   }
 
+  // 抓取最新动态下的少量评论文本，用于二次广告检测。
   async function fetchDynamicComments(dynamicId) {
     try {
       const data = await requestJson(`https://api.bilibili.com/x/v2/reply?type=17&oid=${dynamicId}&pn=1&ps=3`);
@@ -430,6 +450,7 @@
     }
   }
 
+  // 获取用户最近一次投稿的视频标题。
   async function fetchLatestVideo(uid) {
     try {
       await fetchWbiKeys();
@@ -456,12 +477,14 @@
     }
   }
 
+  // 判断文本里是否存在明显的引流词或联系方式信号。
   function hasAdKeywords(text) {
     if (!text) return false;
     const pattern = /(VX|wx|QQ|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i;
     return pattern.test(text);
   }
 
+  // 结合空间签名、动态、评论和投稿信息判断账号是否疑似广告号。
   async function checkUserProfile(uid) {
     const cached = profileCache.get(uid);
     if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.result;
@@ -548,6 +571,7 @@
   }
 
   // ========== 评论区扫描与按钮逻辑 ==========
+  // 把操作按钮优先挂载到评论底部的原生操作区中。
   function mountButtonToComment(item, btn) {
     const actionHost = item.actionHost || item.element;
     const sr = getOpenShadow(actionHost);
@@ -561,6 +585,7 @@
     return false;
   }
 
+  // 合并并持久化新增关键词，同时同步给当前检测器实例。
   async function updateUserKeywords(newWords) {
     if (!newWords || newWords.length === 0) return;
     const { userKeywords = [] } = await chrome.storage.local.get('userKeywords');
@@ -569,6 +594,7 @@
     if (window.AdDetector && typeof window.AdDetector.setUserKeywords === 'function') window.AdDetector.setUserKeywords(updated);
   }
 
+  // 在长文本评论场景下提示用户手动输入更精确的关键词。
   function promptForKeywords(item) {
     const baseHits = [];
     if (/戳这里|点这里|看我主页|私信|加微信|进群|资源/.test(item.text)) baseHits.push('疑似引流词：戳这里/看我主页');
@@ -577,6 +603,7 @@
     return userInput.trim().split(/\s+/).filter(k => k.length >= 2);
   }
 
+  // 为评论添加“标记为广告”按钮，用于人工补充词库。
   function addMarkButton(item, el) {
     if (el.dataset.markBtnAdded === 'true' || el.dataset.adUserMarked === 'true') return;
     el.dataset.markBtnAdded = 'true';
@@ -622,6 +649,7 @@
     el.appendChild(btn);
   }
 
+  // 为评论展示清剿按钮，并处理手动拉黑逻辑。
   function showCleanerButton(item, el, isHighLevel, rawLevel) {
     if (el.dataset.adCleanerProcessed === 'true' && el.querySelector('.bili-ad-cleaner-btn')) return;
 
@@ -676,6 +704,7 @@
     }
   }
 
+  // 将疑似广告账号加入自动清剿队列，避免重复入队。
   function enqueueAutoClean(item) {
     if (autoCleanQueue.some(queued => queued.uid === item.uid)) return;
     if (item.element?.dataset?.adBlocked === 'true') return;
@@ -684,6 +713,7 @@
     console.log('[清剿] 自动入队:', item.name, '(Lv' + item.level + ')');
   }
 
+  // 从自动清剿队列中移除指定用户。
   function removeFromAutoCleanQueue(uid) {
     const index = autoCleanQueue.findIndex(q => q.uid === uid);
     if (index !== -1) {
@@ -692,6 +722,7 @@
     }
   }
 
+  // 评估评论风险，并决定是否展示按钮或触发空间复核。
   async function tryAddButton(item) {
     const el = item.element;
     if (!el) return;
@@ -767,6 +798,7 @@
   }
 
   // ========== 面板与自动 ==========
+  // 构建右侧自动清剿面板，并缓存关键节点引用。
   function buildAutoCleanPanel() {
     if (autoCleanPanel) return autoCleanPanel;
     const panel = document.createElement('div');
@@ -787,6 +819,7 @@
     return panel;
   }
 
+  // 刷新自动清剿面板的队列数量、当前项和显隐状态。
   function updateAutoCleanPanel() {
     if (!autoCleanPanel) return;
     const countEl = autoCleanPanel.querySelector('#ad-clean-queue-count');
@@ -807,6 +840,7 @@
     autoCleanPanel.style.display = autoCleanActive ? 'block' : 'none';
   }
 
+  // 依次处理自动清剿队列中的账号拉黑请求。
   async function processAutoCleanQueue() {
     if (!autoCleanActive || autoCleanQueue.length === 0) { updateAutoCleanPanel(); return; }
     const item = autoCleanQueue[0];
@@ -849,6 +883,7 @@
     }
   }
 
+  // 开启自动清剿定时器，并显示队列面板。
   function startAutoClean() {
     if (autoCleanActive) return;
     autoCleanActive = true;
@@ -858,6 +893,7 @@
     console.log('[清剿] 自动清剿已启动');
   }
 
+  // 停止自动清剿，但保留当前待处理队列。
   function stopAutoClean() {
     autoCleanActive = false;
     if (autoCleanTimer) { clearInterval(autoCleanTimer); autoCleanTimer = null; }
@@ -880,6 +916,7 @@
     }
   });
 
+  // 递归收集评论区域内所有需要监听的 Shadow Root。
   function collectCommentShadowRoots(root, visited = new WeakSet(), acc = []) {
     if (!root || visited.has(root)) return acc;
     visited.add(root);
@@ -892,6 +929,7 @@
     return acc;
   }
 
+  // 汇总页面上当前可见的所有评论项数据。
   function getAllCommentItems() {
     const host = getCommentsHost();
     const hostShadow = getOpenShadow(host);
@@ -911,16 +949,19 @@
     return items;
   }
 
+  // 扫描全部评论，并为符合条件的评论补上操作按钮。
   function scanAndMarkAllComments() {
     const items = getAllCommentItems();
     if (items.length > 0) items.forEach(tryAddButton);
   }
 
+  // 用短延迟合并多次扫描请求，降低频繁变更带来的开销。
   function scheduleFullScan() {
     if (scanTimer !== null) return;
     scanTimer = window.setTimeout(() => { scanTimer = null; scanAndMarkAllComments(); }, 50);
   }
 
+  // 遍历当前根节点下的评论宿主，并继续向内监听其 Shadow DOM。
   function observeNestedCommentShadows(root) {
     const hosts = qa(root, COMMENT_SHADOW_HOST_SELECTOR);
     for (const host of hosts) {
@@ -929,6 +970,7 @@
     }
   }
 
+  // 递归监听评论 Shadow Root 的变更，并在变化后重新扫描评论。
   function observeShadowRootRecursively(root) {
     if (!root || observedShadowRoots.has(root)) return;
     observedShadowRoots.add(root);
@@ -941,11 +983,13 @@
     observer.observe(root, { childList: true, subtree: true });
   }
 
+  // 初始化用户自定义关键词，并注入到广告检测器中。
   async function initUserKeywords() {
     const { userKeywords = [] } = await chrome.storage.local.get('userKeywords');
     if (window.AdDetector && typeof window.AdDetector.setUserKeywords === 'function') window.AdDetector.setUserKeywords(userKeywords);
   }
 
+  // 从评论宿主开始建立 Shadow DOM 监听链路。
   function startObservingShadow() {
     const host = getCommentsHost();
     if (!host) return;
@@ -954,6 +998,7 @@
     observeShadowRootRecursively(sr);
   }
 
+  // 等待评论区挂载完成后，初始化词库并启动评论监听。
   async function waitForHost() {
     await initUserKeywords();
     if (getCommentsHost()) { startObservingShadow(); return; }

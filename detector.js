@@ -19,6 +19,7 @@ const AdDetector = {
 
   userKeywords: [],
 
+  // 更新用户自定义词库，并自动去重后缓存到检测器中。
   setUserKeywords(keywords) {
     this.userKeywords = Array.isArray(keywords) ? [...new Set(keywords)] : [];
   },
@@ -29,6 +30,7 @@ const AdDetector = {
     return strongPattern.test(text);
   },
 
+  // 综合评论文本、等级和头像特征，计算广告嫌疑分数。
   analyze(commentData) {
     let score = 0;
     const { content, level, avatarUrl } = commentData;
