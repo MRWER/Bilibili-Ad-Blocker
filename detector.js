@@ -1,4 +1,4 @@
-// detector.js – 支持动态用户自定义广告词库
+// detector.js – 支持动态用户自定义广告词库 + 强信号检测
 const AdDetector = {
   intentPatterns: [
     { name: '利益诱导+行动', regex: /(免费|白嫖|领取|干货|资源|教程|方法|攻略|资料).{0,10}(私|戳|扣|加|点|看|来|滴滴|dd|关注)/i, score: 35 },
@@ -21,6 +21,12 @@ const AdDetector = {
 
   setUserKeywords(keywords) {
     this.userKeywords = Array.isArray(keywords) ? [...new Set(keywords)] : [];
+  },
+
+  // 检测文本是否包含强广告信号（链接、明显联系方式）
+  hasStrongAdSignals(text) {
+    const strongPattern = /(https?:\/\/|b23\.tv|VX|wx|qq|加群|扫码|进群|私聊|→戳|点击链接)/i;
+    return strongPattern.test(text);
   },
 
   analyze(commentData) {

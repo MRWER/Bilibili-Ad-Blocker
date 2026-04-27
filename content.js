@@ -1,7 +1,7 @@
-// content.js – 重构版（队列独立管理，防并发冲突）
+// content.js – 空间二次验证完整版
 (function () {
   'use strict';
-  console.log('[清剿] content.js 已注入 (重构版)');
+  console.log('[清剿] content.js 已注入 (空间验证完整版)');
 
   const COMMENT_SHADOW_HOST_SELECTOR = [
     'bili-comment-thread-renderer',
@@ -16,13 +16,17 @@
   const observedShadowRoots = new WeakSet();
   let scanTimer = null;
 
-  // 自动清剿状态
   let autoCleanActive = false;
   let autoCleanQueue = [];
   let autoCleanTimer = null;
   let autoCleanPanel = null;
   let autoCleanListEl = null;
   let autoCleanCurrentEl = null;
+
+  const profileCache = new Map();
+  const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
+  // ========== 请求去重 map ==========
+  const pendingProfileChecks = new Map();  // uid -> Promise
 
   // ========== 工具函数 ==========
   function getOpenShadow(el) {
@@ -33,7 +37,6 @@
   function normalizeText(text) { return String(text || '').replace(/\s+/g, ' ').trim(); }
   function getTagName(el) { return el?.tagName ? String(el.tagName).toUpperCase() : ''; }
 
-  // 通用数据提取
   function getCommentData(el) {
     if (!el) return null;
     const vueInstance = el.__vue__ || el._vue__ || el.__vue_app__ || el._data || null;
@@ -42,7 +45,6 @@
     return null;
   }
 
-  // 关键词提取（中文、英文、链接）
   function extractKeywords(text) {
     if (!text) return [];
     const normalized = normalizeText(text);
@@ -53,25 +55,10 @@
         chineseWords.add(cleanedChinese.substring(i, i + len));
       }
     }
-    const cnStopwords = new Set([
-      '可以','什么','怎么','为什么','觉得','还是','但是','因为','所以','如果','不过','只是',
-      '然后','已经','比较','非常','真的','这个','那个','一些','一个','自己','他们','我们',
-      '你们','没有','知道','出来','起来','过来','进去','就是','也是','不是','还有','的话',
-      '而已','而且','并且'
-    ]);
+    const cnStopwords = new Set(['可以','什么','怎么','为什么','觉得','还是','但是','因为','所以','如果','不过','只是','然后','已经','比较','非常','真的','这个','那个','一些','一个','自己','他们','我们','你们','没有','知道','出来','起来','过来','进去','就是','也是','不是','还有','的话','而已','而且','并且']);
     const cnResult = [...chineseWords].filter(w => w.length >= 2 && !cnStopwords.has(w));
     const englishWords = normalized.match(/[a-zA-Z]{2,}/g) || [];
-    const enStopwords = new Set([
-      'a','an','the','is','are','was','were','be','been','being','have','has','had',
-      'do','does','did','will','would','could','should','may','might','shall','can',
-      'need','dare','ought','used','to','of','in','for','on','with','at','by','from',
-      'as','into','through','during','before','after','above','below','between','under',
-      'again','further','then','once','here','there','when','where','why','how','all',
-      'both','each','few','more','most','other','some','such','no','nor','not','only',
-      'own','same','so','than','too','very','and','but','or','if','because','as',
-      'until','while','this','that','these','those','am','it','its', 'he','she','they',
-      'we','you','i','me','my','your','his','her','our','their','mine','yours','hers'
-    ]);
+    const enStopwords = new Set(['a','an','the','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','need','dare','ought','used','to','of','in','for','on','with','at','by','from','as','into','through','during','before','after','above','below','between','under','again','further','then','once','here','there','when','where','why','how','all','both','each','few','more','most','other','some','such','no','nor','not','only','own','same','so','than','too','very','and','but','or','if','because','as','until','while','this','that','these','those','am','it','its','he','she','they','we','you','i','me','my','your','his','her','our','their','mine','yours','hers']);
     const enResult = [...new Set(englishWords)].map(w => w.toLowerCase()).filter(w => !enStopwords.has(w) && w.length >= 2);
     const urls = normalized.match(/https?:\/\/[^\s]+/g) || [];
     const urlKeywords = [];
@@ -103,26 +90,14 @@
     return null;
   }
 
-  // 增强版等级提取
   function extractLevelFromData(commentData) {
     if (!commentData) return null;
-    const candidates = [
-      commentData?.member?.level_info?.current_level,
-      commentData?.member?.level_info?.currentLevel,
-      commentData?.reply_control?.user_level,
-      commentData?.member?.level,
-      commentData?.user_level,
-      commentData?.level,
-      commentData?.info?.level,
-      commentData?.info?.level_info?.current_level,
-      commentData?.content?.member?.level_info?.current_level
-    ];
+    const candidates = [commentData?.member?.level_info?.current_level, commentData?.member?.level_info?.currentLevel, commentData?.reply_control?.user_level, commentData?.member?.level, commentData?.user_level, commentData?.level, commentData?.info?.level, commentData?.info?.level_info?.current_level, commentData?.content?.member?.level_info?.current_level];
     for (const candidate of candidates) {
       const level = Number(candidate);
       if (Number.isFinite(level) && level > 0 && level <= 6) return level;
     }
-    if (commentData?.member?.is_hardcore_vip === true || 
-        commentData?.member?.is_hardcore_vip === 1) return 6;
+    if (commentData?.member?.is_hardcore_vip === true || commentData?.member?.is_hardcore_vip === 1) return 6;
     return null;
   }
 
@@ -131,14 +106,11 @@
     if (dataLevel != null) return dataLevel;
     const sr = getOpenShadow(commentRenderer);
     if (!sr) return null;
-    
     const infoHost = q(sr, 'bili-comment-user-info');
     if (infoHost) {
       const infoSr = getOpenShadow(infoHost);
       if (infoSr) {
-        const levelImg = q(infoSr, '#user-level img') || 
-                        q(infoSr, '.level-icon') || 
-                        q(infoSr, '[class*="level"] img');
+        const levelImg = q(infoSr, '#user-level img') || q(infoSr, '.level-icon') || q(infoSr, '[class*="level"] img');
         if (levelImg) {
           const imgSrc = levelImg.getAttribute('src') || '';
           let match = imgSrc.match(/level_(\d+)\.(?:svg|png)/i) || imgSrc.match(/lv(\d+)\.(?:svg|png)/i);
@@ -215,37 +187,308 @@
     return { uid, name, text, level, linkText, element: target, actionHost: renderer };
   }
 
-  function collectCommentShadowRoots(root, visited = new WeakSet(), acc = []) {
-    if (!root || visited.has(root)) return acc;
-    visited.add(root);
-    acc.push(root);
-    const hosts = qa(root, COMMENT_SHADOW_HOST_SELECTOR);
-    for (const host of hosts) {
-      const sr = getOpenShadow(host);
-      if (sr) collectCommentShadowRoots(sr, visited, acc);
+  // ========== WBI 签名相关 ==========
+  let wbiKeys = { img_key: '', sub_key: '' };
+  async function fetchWbiKeys() {
+    if (wbiKeys.img_key && wbiKeys.sub_key) return wbiKeys;
+    try {
+      const res = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' });
+      const json = await res.json();
+      const imgUrl = json?.data?.wbi_img?.img_url || '';
+      const subUrl = json?.data?.wbi_img?.sub_url || '';
+      wbiKeys.img_key = imgUrl.split('/').pop().split('.')[0];
+      wbiKeys.sub_key = subUrl.split('/').pop().split('.')[0];
+    } catch (e) {
+      console.warn('[清剿] WBI 密钥获取失败', e);
     }
-    return acc;
+    return wbiKeys;
   }
 
-  function getAllCommentItems() {
-    const host = getCommentsHost();
-    const hostShadow = getOpenShadow(host);
-    if (!hostShadow) return [];
-    const roots = collectCommentShadowRoots(hostShadow);
-    const seenTargets = new WeakSet();
-    const items = [];
-    for (const root of roots) {
-      const targets = [...qa(root, 'bili-comment-thread-renderer'), ...qa(root, 'bili-comment-reply-renderer')];
-      for (const target of targets) {
-        if (seenTargets.has(target)) continue;
-        seenTargets.add(target);
-        const item = extractCommentDataFromTarget(target);
-        if (item) items.push(item);
+  function md5(string) {
+    function rotateLeft(lValue, iShiftBits) { return (lValue << iShiftBits) | (lValue >>> (32 - iShiftBits)); }
+    function addUnsigned(lX, lY) {
+      let lX4, lY4, lX8, lY8, lResult;
+      lX8 = (lX & 0x80000000); lY8 = (lY & 0x80000000);
+      lX4 = (lX & 0x40000000); lY4 = (lY & 0x40000000);
+      lResult = (lX & 0x3FFFFFFF) + (lY & 0x3FFFFFFF);
+      if (lX4 & lY4) return (lResult ^ 0x80000000 ^ lX8 ^ lY8);
+      if (lX4 | lY4) { if (lResult & 0x40000000) return (lResult ^ 0xC0000000 ^ lX8 ^ lY8); else return (lResult ^ 0x40000000 ^ lX8 ^ lY8); }
+      else return (lResult ^ lX8 ^ lY8);
+    }
+    function F(x,y,z) { return (x & y) | ((~x) & z); }
+    function G(x,y,z) { return (x & z) | (y & (~z)); }
+    function H(x,y,z) { return (x ^ y ^ z); }
+    function I(x,y,z) { return (y ^ (x | (~z))); }
+    function FF(a,b,c,d,x,s,ac) { a = addUnsigned(a, addUnsigned(addUnsigned(F(b,c,d),x),ac)); return addUnsigned(rotateLeft(a,s),b); }
+    function GG(a,b,c,d,x,s,ac) { a = addUnsigned(a, addUnsigned(addUnsigned(G(b,c,d),x),ac)); return addUnsigned(rotateLeft(a,s),b); }
+    function HH(a,b,c,d,x,s,ac) { a = addUnsigned(a, addUnsigned(addUnsigned(H(b,c,d),x),ac)); return addUnsigned(rotateLeft(a,s),b); }
+    function II(a,b,c,d,x,s,ac) { a = addUnsigned(a, addUnsigned(addUnsigned(I(b,c,d),x),ac)); return addUnsigned(rotateLeft(a,s),b); }
+    function convertToWordArray(string) {
+      let lMessageLength = string.length;
+      let lNumberOfWords_temp1 = lMessageLength + 8;
+      let lNumberOfWords_temp2 = (lNumberOfWords_temp1 - (lNumberOfWords_temp1 % 64)) / 64;
+      let lNumberOfWords = (lNumberOfWords_temp2 + 1) * 16;
+      let lWordArray = Array(lNumberOfWords - 1);
+      let lBytePosition = 0, lByteCount = 0;
+      while (lByteCount < lMessageLength) {
+        lWordCount = (lByteCount - (lByteCount % 4)) / 4;
+        lBytePosition = (lByteCount % 4) * 8;
+        lWordArray[lWordCount] = (lWordArray[lWordCount] | (string.charCodeAt(lByteCount) << lBytePosition));
+        lByteCount++;
       }
+      lWordCount = (lByteCount - (lByteCount % 4)) / 4;
+      lBytePosition = (lByteCount % 4) * 8;
+      lWordArray[lWordCount] = lWordArray[lWordCount] | (0x80 << lBytePosition);
+      lWordArray[lNumberOfWords - 2] = lMessageLength << 3;
+      lWordArray[lNumberOfWords - 1] = lMessageLength >>> 29;
+      return lWordArray;
     }
-    return items;
+    function wordToHex(lValue) {
+      let wordToHexValue = "", wordToHexValue_temp = "", lByte, lCount;
+      for (lCount = 0; lCount <= 3; lCount++) {
+        lByte = (lValue >>> (lCount * 8)) & 255;
+        wordToHexValue_temp = "0" + lByte.toString(16);
+        wordToHexValue = wordToHexValue + wordToHexValue_temp.substr(wordToHexValue_temp.length - 2, 2);
+      }
+      return wordToHexValue;
+    }
+    function utf8_encode(string) {
+      string = string.replace(/\r\n/g, "\n");
+      let utftext = "";
+      for (let n = 0; n < string.length; n++) {
+        let c = string.charCodeAt(n);
+        if (c < 128) utftext += String.fromCharCode(c);
+        else if ((c > 127) && (c < 2048)) {
+          utftext += String.fromCharCode((c >> 6) | 192);
+          utftext += String.fromCharCode((c & 63) | 128);
+        } else {
+          utftext += String.fromCharCode((c >> 12) | 224);
+          utftext += String.fromCharCode(((c >> 6) & 63) | 128);
+          utftext += String.fromCharCode((c & 63) | 128);
+        }
+      }
+      return utftext;
+    }
+    let x = Array();
+    let k, AA, BB, CC, DD, a, b, c, d;
+    let S11 = 7, S12 = 12, S13 = 17, S14 = 22;
+    let S21 = 5, S22 = 9, S23 = 14, S24 = 20;
+    let S31 = 4, S32 = 11, S33 = 16, S34 = 23;
+    let S41 = 6, S42 = 10, S43 = 15, S44 = 21;
+    string = utf8_encode(string);
+    x = convertToWordArray(string);
+    a = 0x67452301; b = 0xEFCDAB89; c = 0x98BADCFE; d = 0x10325476;
+    for (k = 0; k < x.length; k += 16) {
+      AA = a; BB = b; CC = c; DD = d;
+      a = FF(a,b,c,d,x[k],S11,0xD76AA478); d = FF(d,a,b,c,x[k+1],S12,0xE8C7B756); c = FF(c,d,a,b,x[k+2],S13,0x242070DB); b = FF(b,c,d,a,x[k+3],S14,0xC1BDCEEE);
+      a = FF(a,b,c,d,x[k+4],S11,0xF57C0FAF); d = FF(d,a,b,c,x[k+5],S12,0x4787C62A); c = FF(c,d,a,b,x[k+6],S13,0xA8304613); b = FF(b,c,d,a,x[k+7],S14,0xFD469501);
+      a = FF(a,b,c,d,x[k+8],S11,0x698098D8); d = FF(d,a,b,c,x[k+9],S12,0x8B44F7AF); c = FF(c,d,a,b,x[k+10],S13,0xFFFF5BB1); b = FF(b,c,d,a,x[k+11],S14,0x895CD7BE);
+      a = FF(a,b,c,d,x[k+12],S11,0x6B901122); d = FF(d,a,b,c,x[k+13],S12,0xFD987193); c = FF(c,d,a,b,x[k+14],S13,0xA679438E); b = FF(b,c,d,a,x[k+15],S14,0x49B40821);
+      a = GG(a,b,c,d,x[k+1],S21,0xF61E2562); d = GG(d,a,b,c,x[k+6],S22,0xC040B340); c = GG(c,d,a,b,x[k+11],S23,0x265E5A51); b = GG(b,c,d,a,x[k],S24,0xE9B6C7AA);
+      a = GG(a,b,c,d,x[k+5],S21,0xD62F105D); d = GG(d,a,b,c,x[k+10],S22,0x2441453); c = GG(c,d,a,b,x[k+15],S23,0xD8A1E681); b = GG(b,c,d,a,x[k+4],S24,0xE7D3FBC8);
+      a = GG(a,b,c,d,x[k+9],S21,0x21E1CDE6); d = GG(d,a,b,c,x[k+14],S22,0xC33707D6); c = GG(c,d,a,b,x[k+3],S23,0xF4D50D87); b = GG(b,c,d,a,x[k+8],S24,0x455A14ED);
+      a = GG(a,b,c,d,x[k+13],S21,0xA9E3E905); d = GG(d,a,b,c,x[k+2],S22,0xFCEFA3F8); c = GG(c,d,a,b,x[k+7],S23,0x676F02D9); b = GG(b,c,d,a,x[k+12],S24,0x8D2A4C8A);
+      a = HH(a,b,c,d,x[k+5],S31,0xFFFA3942); d = HH(d,a,b,c,x[k+8],S32,0x8771F681); c = HH(c,d,a,b,x[k+11],S33,0x6D9D6122); b = HH(b,c,d,a,x[k+14],S34,0xFDE5380C);
+      a = HH(a,b,c,d,x[k+1],S31,0xA4BEEA44); d = HH(d,a,b,c,x[k+4],S32,0x4BDECFA9); c = HH(c,d,a,b,x[k+7],S33,0xF6BB4B60); b = HH(b,c,d,a,x[k+10],S34,0xBEbfBC70);
+      a = HH(a,b,c,d,x[k+13],S31,0x289B7EC6); d = HH(d,a,b,c,x[k],S32,0xEAA127FA); c = HH(c,d,a,b,x[k+3],S33,0xD4EF3085); b = HH(b,c,d,a,x[k+6],S34,0x4881D05);
+      a = HH(a,b,c,d,x[k+9],S31,0xD9D4D039); d = HH(d,a,b,c,x[k+12],S32,0xE6DB99E5); c = HH(c,d,a,b,x[k+15],S33,0x1FA27CF8); b = HH(b,c,d,a,x[k+2],S34,0xC4AC5665);
+      a = II(a,b,c,d,x[k],S41,0xF4292244); d = II(d,a,b,c,x[k+7],S42,0x432AFF97); c = II(c,d,a,b,x[k+14],S43,0xAB9423A7); b = II(b,c,d,a,x[k+5],S44,0xFC93A039);
+      a = II(a,b,c,d,x[k+12],S41,0x655B59C3); d = II(d,a,b,c,x[k+3],S42,0x8F0CCC92); c = II(c,d,a,b,x[k+10],S43,0xFFEFF47D); b = II(b,c,d,a,x[k+1],S44,0x85845DD1);
+      a = II(a,b,c,d,x[k+8],S41,0x6FA87E4F); d = II(d,a,b,c,x[k+15],S42,0xFE2CE6E0); c = II(c,d,a,b,x[k+6],S43,0xA3014314); b = II(b,c,d,a,x[k+13],S44,0x4E0811A1);
+      a = II(a,b,c,d,x[k+4],S41,0xF7537E82); d = II(d,a,b,c,x[k+11],S42,0xBD3AF235); c = II(c,d,a,b,x[k+2],S43,0x2AD7D2BB); b = II(b,c,d,a,x[k+9],S44,0xEB86D391);
+      a = addUnsigned(a,AA); b = addUnsigned(b,BB); c = addUnsigned(c,CC); d = addUnsigned(d,DD);
+    }
+    return (wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)).toLowerCase();
   }
 
+  function generateWbi(sortParams) {
+    const { img_key, sub_key } = wbiKeys;
+    if (!img_key || !sub_key) return '';
+    const mixinKey = (img_key + sub_key).replace(/(.{8})(.{8})(.{8})(.{8})/, (m, a, b, c, d) => {
+      return a.substring(2, 6) + b.substring(2, 6) + c.substring(2, 6) + d.substring(2, 6);
+    });
+    const query = sortParams.join('&');
+    const w_rid = md5(query + mixinKey);
+    return w_rid;
+  }
+
+  // ========== 空间信息获取 ==========
+  // ========== 请求队列（节流） ==========
+  const fetchQueue = [];
+  let fetchTimer = null;
+  const FETCH_DELAY = 1500; // 请求间隔 1.5 秒
+
+  function enqueueFetch(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      fetchQueue.push({ url, options, resolve, reject });
+      processFetchQueue();
+    });
+  }
+
+  function processFetchQueue() {
+    if (fetchTimer) return;
+    if (fetchQueue.length === 0) return;
+
+    const task = fetchQueue.shift();
+    fetchTimer = setTimeout(async () => {
+      fetchTimer = null;
+      try {
+        const res = await fetch(task.url, { credentials: 'include', ...task.options });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (json.code !== 0) {
+          // 频率限制时进行重试
+          if (json.code === -412 || json.code === -509) {
+            console.warn('[清剿] 频率限制，等待后重试');
+            fetchQueue.unshift(task); // 放回队头
+            setTimeout(() => processFetchQueue(), 2000); // 等待 2 秒再处理
+          } else {
+            throw new Error(json.message || 'API error');
+          }
+        } else {
+          task.resolve(json.data);
+        }
+      } catch (e) {
+        task.reject(e);
+      }
+      processFetchQueue(); // 继续处理下一个
+    }, FETCH_DELAY);
+  }
+
+  // 修改 requestJson 调用队列
+  async function requestJson(url, options) {
+    return enqueueFetch(url, options);
+  }
+
+  async function fetchSpaceInfo(uid) {
+    const data = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
+    return { sign: normalizeText(data.sign || ''), name: data.name };
+  }
+
+  async function fetchLatestDynamic(uid) {
+    try {
+      const data = await requestJson(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${uid}`);
+      const items = data.items || [];
+      if (items.length === 0) return null;
+      const topItem = items.find(item => item.top === 1 || item.modules?.module_tag?.text === '置顶');
+      const item = topItem || items[0];
+      const desc = item.modules?.module_dynamic?.desc?.text || '';
+      const dynamicId = item.id_str || item.basic?.comment_id_str || '';
+      return { id: dynamicId, text: normalizeText(desc) };
+    } catch (e) {
+      console.warn('[清剿] 获取动态失败', e);
+      return null;
+    }
+  }
+
+  async function fetchDynamicComments(dynamicId) {
+    try {
+      const data = await requestJson(`https://api.bilibili.com/x/v2/reply?type=17&oid=${dynamicId}&pn=1&ps=3`);
+      const replies = data.replies || [];
+      const texts = replies.map(r => normalizeText(r.content?.message || '')).filter(Boolean);
+      return texts;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function fetchLatestVideo(uid) {
+    try {
+      await fetchWbiKeys();
+      const params = `mid=${uid}&ps=1&tid=0&pn=1&keyword=&order=pubdate`;
+      const encodedParams = new URLSearchParams(params);
+      const sortParams = Array.from(encodedParams.keys()).sort().map(k => `${k}=${encodedParams.get(k)}`);
+      const w_rid = generateWbi(sortParams);
+      const url = `https://api.bilibili.com/x/space/wbi/arc/search?mid=${uid}&ps=1&tid=0&pn=1&keyword=&order=pubdate&w_rid=${w_rid}`;
+      const data = await requestJson(url);
+      const vlist = data.list?.vlist || [];
+      if (vlist.length === 0) return null;
+      return normalizeText(vlist[0].title || '');
+    } catch (e) {
+      console.warn('[清剿] 获取视频投稿失败', e);
+      return null;
+    }
+  }
+
+  function hasAdKeywords(text) {
+    if (!text) return false;
+    const pattern = /(VX|wx|QQ|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i;
+    return pattern.test(text);
+  }
+
+  async function checkUserProfile(uid) {
+    const cached = profileCache.get(uid);
+    if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.result;
+
+    // 防止并发重复请求
+    if (pendingProfileChecks.has(uid)) {
+      return pendingProfileChecks.get(uid);
+    }
+
+    const promise = (async () => {
+      // 以下是原函数体，保持不变
+      const details = { sign: null, dynamic: null, dynamicComments: [], video: null, empty: false };
+      let isAd = false;
+      try {
+        const space = await fetchSpaceInfo(uid);
+        details.sign = space.sign;
+        console.log(`[清剿] UID ${uid} 签名:`, space.sign);
+        if (hasAdKeywords(space.sign)) {
+          isAd = true;
+          console.log('[清剿] 签名命中引流词');
+        }
+
+        const dynamic = await fetchLatestDynamic(uid);
+        if (dynamic) {
+          details.dynamic = dynamic.text;
+          console.log(`[清剿] UID ${uid} 最新动态:`, dynamic.text);
+          if (!isAd && hasAdKeywords(dynamic.text)) {
+            isAd = true;
+            console.log('[清剿] 动态命中引流词');
+          }
+          if (!isAd) {
+            const comments = await fetchDynamicComments(dynamic.id);
+            details.dynamicComments = comments;
+            console.log(`[清剿] UID ${uid} 动态评论:`, comments);
+            if (comments.some(c => hasAdKeywords(c))) {
+              isAd = true;
+              console.log('[清剿] 动态评论区命中引流词');
+            }
+          }
+        }
+        const videoTitle = await fetchLatestVideo(uid);
+        if (videoTitle) {
+          details.video = videoTitle;
+          console.log(`[清剿] UID ${uid} 最新视频:`, videoTitle);
+          if (!isAd && hasAdKeywords(videoTitle)) {
+            isAd = true;
+            console.log('[清剿] 视频标题命中引流词');
+          }
+        }
+
+        if (!space.sign && !dynamic && !videoTitle) {
+          isAd = true;
+          details.empty = true;
+          console.log('[清剿] 空间为空，判定为广告号');
+        }
+      } catch (e) {
+        console.error(`[清剿] 空间检查失败 (UID ${uid})`, e);
+        return { isAd: null, details, error: e.message };
+      }
+      const result = { isAd, details };
+      profileCache.set(uid, { result, time: Date.now() });
+      return result;
+    })();
+
+    pendingProfileChecks.set(uid, promise);
+    try {
+      return await promise;
+    } finally {
+      pendingProfileChecks.delete(uid);
+    }
+  }
+
+  // ========== 评论区扫描与按钮逻辑 ==========
   function mountButtonToComment(item, btn) {
     const actionHost = item.actionHost || item.element;
     const sr = getOpenShadow(actionHost);
@@ -320,92 +563,57 @@
     el.appendChild(btn);
   }
 
-  // ========== 清剿按钮与队列管理 ==========
-  function tryAddButton(item) {
-    const el = item.element;
-    if (!el) return;
-    if (!window.AdDetector || typeof window.AdDetector.analyze !== 'function') return;
+  function showCleanerButton(item, el, isHighLevel, rawLevel) {
+    if (el.dataset.adCleanerProcessed === 'true' && el.querySelector('.bili-ad-cleaner-btn')) return;
 
-    const alreadyHasCleaner = el.dataset.adCleanerProcessed === 'true';
-    const isUserMarked = el.dataset.adUserMarked === 'true';
-    const alreadyBlocked = el.dataset.adBlocked === 'true';
-    
-    let score = 0;
-    if (isUserMarked) score = 100;
-    else score = window.AdDetector.analyze({ content: item.text, level: item.level, avatarUrl: '' });
-    
-    const rawLevel = item.level;
-    const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
-    const isUnknownLevel = rawLevel === null || rawLevel === undefined;
-    
-    if (!alreadyHasCleaner && (score >= 40 || isUserMarked)) {
-      const btn = document.createElement('span');
-      btn.className = 'bili-ad-cleaner-btn';
-      btn.style.cssText = 'display:inline-flex; align-items:center; margin-left:12px; color:#fff; background:#f25d8e; border-radius:4px; padding:2px 8px; font-size:12px; line-height:1.4; cursor:pointer; user-select:none; z-index:999; white-space:nowrap;';
-      btn.textContent = '🚫 清剿';
-      btn.title = isHighLevel ? '等级较高或等级未知，仅提示，不拉黑' : '直接拉黑';
-      
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (isHighLevel) {
-          const reason = isUnknownLevel ? 
-            '该用户等级未知，可能为高等级账号或6级硬核会员。' : 
-            `该用户等级为 Lv${rawLevel}，可能为被盗的高级号。`;
-          alert(`⚠️ ${reason}\n已跳过自动拉黑，请手动举报（右键评论 -> 举报）。`);
-          return;
-        }
+    const btn = document.createElement('span');
+    btn.className = 'bili-ad-cleaner-btn';
+    btn.style.cssText = 'display:inline-flex; align-items:center; margin-left:12px; color:#fff; background:#f25d8e; border-radius:4px; padding:2px 8px; font-size:12px; line-height:1.4; cursor:pointer; user-select:none; z-index:999; white-space:nowrap;';
+    btn.textContent = '🚫 清剿';
+    btn.title = isHighLevel ? '等级较高或等级未知，仅提示，不拉黑' : '直接拉黑';
 
-        // 自动清剿开启时，禁止手动清剿队列中的账号
-        if (autoCleanActive && autoCleanQueue.some(q => q.uid === item.uid)) {
-          alert('该账号已经在自动清剿队列中，无需手动操作。');
-          return;
-        }
-
-        // 手动清剿：先从队列中移除以防并发
-        removeFromAutoCleanQueue(item.uid);
-
-        // 执行拉黑
-        try {
-          const jctMatch = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
-          const biliJct = jctMatch ? jctMatch[1] : '';
-          if (!biliJct) { alert('未登录 B站'); return; }
-          const res = await fetch('https://api.bilibili.com/x/relation/modify', {
-            method: 'POST', credentials: 'include',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'Origin': 'https://www.bilibili.com', 'Referer': 'https://www.bilibili.com/' },
-            body: new URLSearchParams({ fid: item.uid, act: '5', re_src: 11, csrf: biliJct })
-          });
-          const json = await res.json();
-          if (json.code !== 0) throw new Error(json.message);
-          el.dataset.adBlocked = 'true';
-          btn.textContent = '✅ 已清剿';
-          btn.style.background = '#999';
-          btn.style.pointerEvents = 'none';
-        } catch (err) { 
-          alert('拉黑失败：' + err.message); 
-        }
-      });
-      
-      if (mountButtonToComment(item, btn)) {
-        el.dataset.adCleanerProcessed = 'true';
-        item.cleanerBtn = btn;
-      } else {
-        el.style.position = 'relative';
-        btn.style.position = 'absolute'; btn.style.right = '8px'; btn.style.top = '50%'; btn.style.transform = 'translateY(-50%)';
-        el.appendChild(btn);
-        el.dataset.adCleanerProcessed = 'true';
-        item.cleanerBtn = btn;
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (isHighLevel) {
+        const reason = (rawLevel === null || rawLevel === undefined) ? '该用户等级未知，可能为高等级账号或6级硬核会员。' : `该用户等级为 Lv${rawLevel}，可能为被盗的高级号。`;
+        alert(`⚠️ ${reason}\n已跳过自动拉黑，请手动举报（右键评论 -> 举报）。`);
+        return;
       }
-    }
-    
-    // 无条件将低等级未拉黑账号加入队列（为自动清剿准备）
-    if (!isHighLevel && !alreadyBlocked && !el.dataset.adBlocked) {
-      enqueueAutoClean(item);
-    }
 
-    // 标记按钮
-    const alreadyHasMark = el.dataset.markBtnAdded === 'true';
-    if (!alreadyHasMark && !isUserMarked) {
-      addMarkButton(item, el);
+      if (autoCleanActive && autoCleanQueue.some(q => q.uid === item.uid)) {
+        alert('该账号已经在自动清剿队列中，无需手动操作。');
+        return;
+      }
+
+      removeFromAutoCleanQueue(item.uid);
+
+      try {
+        const jctMatch = document.cookie.match(/(?:^|;\s*)bili_jct=([^;]+)/);
+        const biliJct = jctMatch ? jctMatch[1] : '';
+        if (!biliJct) { alert('未登录 B站'); return; }
+        const res = await fetch('https://api.bilibili.com/x/relation/modify', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'Origin': 'https://www.bilibili.com', 'Referer': 'https://www.bilibili.com/' },
+          body: new URLSearchParams({ fid: item.uid, act: '5', re_src: 11, csrf: biliJct })
+        });
+        const json = await res.json();
+        if (json.code !== 0) throw new Error(json.message);
+        el.dataset.adBlocked = 'true';
+        btn.textContent = '✅ 已清剿';
+        btn.style.background = '#999';
+        btn.style.pointerEvents = 'none';
+      } catch (err) { alert('拉黑失败：' + err.message); }
+    });
+
+    if (mountButtonToComment(item, btn)) {
+      el.dataset.adCleanerProcessed = 'true';
+      item.cleanerBtn = btn;
+    } else {
+      el.style.position = 'relative';
+      btn.style.position = 'absolute'; btn.style.right = '8px'; btn.style.top = '50%'; btn.style.transform = 'translateY(-50%)';
+      el.appendChild(btn);
+      el.dataset.adCleanerProcessed = 'true';
+      item.cleanerBtn = btn;
     }
   }
 
@@ -425,6 +633,81 @@
     }
   }
 
+  async function tryAddButton(item) {
+    const el = item.element;
+    if (!el) return;
+    if (!window.AdDetector || typeof window.AdDetector.analyze !== 'function') return;
+
+    const alreadyHasCleaner = el.dataset.adCleanerProcessed === 'true';
+    const isUserMarked = el.dataset.adUserMarked === 'true';
+    const alreadyBlocked = el.dataset.adBlocked === 'true';
+
+    if (alreadyHasCleaner || alreadyBlocked) {
+      const alreadyHasMark = el.dataset.markBtnAdded === 'true';
+      if (!alreadyHasMark && !isUserMarked) addMarkButton(item, el);
+      return;
+    }
+
+    let score = 0;
+    if (isUserMarked) score = 100;
+    else score = window.AdDetector.analyze({ content: item.text, level: item.level, avatarUrl: '' });
+
+    const rawLevel = item.level;
+    const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
+    const isUnknownLevel = rawLevel === null || rawLevel === undefined;
+    const hasStrongSignal = window.AdDetector.hasStrongAdSignals ? window.AdDetector.hasStrongAdSignals(item.text) : false;
+    const needProfileCheck = !isHighLevel && !hasStrongSignal && !isUserMarked && score >= 40;
+
+    if (score >= 40 || isUserMarked) {
+      if (hasStrongSignal || isUserMarked || isHighLevel) {
+        showCleanerButton(item, el, isHighLevel, rawLevel);
+        if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
+      } else if (needProfileCheck) {
+        // 已经有正在进行的检测，直接跳过
+        if (el.dataset.adProfilePending === 'true') return;
+        // 已经被标记为检测失败过，暂时跳过（下次刷新页面会重置）
+        if (el.dataset.adCleanerProcessed === 'error') return;
+
+        el.dataset.adProfilePending = 'true';
+
+        const placeholder = document.createElement('span');
+        placeholder.className = 'bili-ad-cleaner-placeholder';
+        placeholder.style.cssText = 'display:inline-flex; align-items:center; margin-left:12px; color:#bfc7d5; background:rgba(255,255,255,0.06); border-radius:4px; padding:2px 8px; font-size:12px; white-space:nowrap;';
+        placeholder.textContent = '⏳ 检测中';
+        mountButtonToComment(item, placeholder) || el.appendChild(placeholder);
+
+        checkUserProfile(item.uid).then(({ isAd, details, error }) => {
+          if (placeholder) placeholder.remove();
+          delete el.dataset.adProfilePending;
+
+          if (error) {
+            console.warn('[清剿] 空间检测失败，暂时跳过该评论', error);
+            el.dataset.adCleanerProcessed = 'error'; // 避免后续重复尝试
+            // 不做其他处理，按钮不出现
+          } else if (isAd) {
+            console.log('[清剿] 空间检测确认广告，显示按钮');
+            showCleanerButton(item, el, false, rawLevel);
+            if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
+          } else {
+            console.log('[清剿] 空间正常，取消广告标记');
+            // 正常用户，不显示清剿按钮
+          }
+        }).catch(err => {
+          if (placeholder) placeholder.remove();
+          delete el.dataset.adProfilePending;
+          el.dataset.adCleanerProcessed = 'error';
+          console.error('[清剿] 空间检测异常', err);
+        });
+      }
+    }
+
+    const alreadyHasMark = el.dataset.markBtnAdded === 'true';
+    if (!alreadyHasMark && !isUserMarked) {
+      addMarkButton(item, el);
+    }
+  }
+
+  // ========== 面板与自动 ==========
   function buildAutoCleanPanel() {
     if (autoCleanPanel) return autoCleanPanel;
     const panel = document.createElement('div');
@@ -460,18 +743,13 @@
     }
     if (autoCleanCurrentEl) {
       const current = autoCleanQueue[0];
-      autoCleanCurrentEl.textContent = current ? 
-        `当前：${current.name} (Lv${current.level ?? '?'})` : 
-        '队列已空，等待新评论...';
+      autoCleanCurrentEl.textContent = current ? `当前：${current.name} (Lv${current.level ?? '?'})` : '队列已空，等待新评论...';
     }
     autoCleanPanel.style.display = autoCleanActive ? 'block' : 'none';
   }
 
   async function processAutoCleanQueue() {
-    if (!autoCleanActive || autoCleanQueue.length === 0) {
-      updateAutoCleanPanel();
-      return;
-    }
+    if (!autoCleanActive || autoCleanQueue.length === 0) { updateAutoCleanPanel(); return; }
     const item = autoCleanQueue[0];
     updateAutoCleanPanel();
     try {
@@ -485,13 +763,11 @@
       });
       const json = await res.json();
       if (json.code !== 0) throw new Error(json.message);
-      // 更新按钮状态（通过引用或备用查找）
       if (item.cleanerBtn) {
         item.cleanerBtn.textContent = '✅ 已清剿';
         item.cleanerBtn.style.background = '#999';
         item.cleanerBtn.style.pointerEvents = 'none';
       } else if (item.element) {
-        // 备用查找
         const actionHost = item.actionHost || item.element;
         const sr = getOpenShadow(actionHost);
         if (sr) {
@@ -545,11 +821,40 @@
     }
   });
 
+  function collectCommentShadowRoots(root, visited = new WeakSet(), acc = []) {
+    if (!root || visited.has(root)) return acc;
+    visited.add(root);
+    acc.push(root);
+    const hosts = qa(root, COMMENT_SHADOW_HOST_SELECTOR);
+    for (const host of hosts) {
+      const sr = getOpenShadow(host);
+      if (sr) collectCommentShadowRoots(sr, visited, acc);
+    }
+    return acc;
+  }
+
+  function getAllCommentItems() {
+    const host = getCommentsHost();
+    const hostShadow = getOpenShadow(host);
+    if (!hostShadow) return [];
+    const roots = collectCommentShadowRoots(hostShadow);
+    const seenTargets = new WeakSet();
+    const items = [];
+    for (const root of roots) {
+      const targets = [...qa(root, 'bili-comment-thread-renderer'), ...qa(root, 'bili-comment-reply-renderer')];
+      for (const target of targets) {
+        if (seenTargets.has(target)) continue;
+        seenTargets.add(target);
+        const item = extractCommentDataFromTarget(target);
+        if (item) items.push(item);
+      }
+    }
+    return items;
+  }
+
   function scanAndMarkAllComments() {
     const items = getAllCommentItems();
-    if (items.length > 0) {
-      items.forEach(tryAddButton);
-    }
+    if (items.length > 0) items.forEach(tryAddButton);
   }
 
   function scheduleFullScan() {
