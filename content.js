@@ -398,15 +398,24 @@
   // ========== 空间信息获取 ==========
   // 获取用户空间基础资料和活跃度统计信息。
   async function fetchSpaceInfo(uid) {
-    const data = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
+    // 并行请求两个接口，优化加载速度
+    const [infoData, cardData] = await Promise.all([
+      requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`),
+      requestJson(`https://api.bilibili.com/x/web-interface/card?mid=${uid}`)
+    ]);
+
+    // cardData 包含 fans, attention, archive_count (视频数), like_num (获赞数)
+    const card = cardData?.card || {};
+    const stat = cardData || {};
+
     return {
-      sign: normalizeText(data.sign || ''),
-      name: data.name,
-      // 🆕 新增：用户统计数据
-      fans: data.fans || 0,      // 粉丝数
-      attention: data.attention || 0, // 关注数
-      likes: data.likes || 0,    // 获赞数
-      playNum: data.playNum || 0 // 播放数
+      sign: normalizeText(infoData.sign || ''),
+      name: infoData.name,
+      // 🆕 从新接口更新用户统计数据
+      following: card?.attention || 0,     // 关注数
+      fans: card?.fans || 0,              // 粉丝数
+      videos: stat?.archive_count || 0,   // 视频/专栏投稿总数 (替代播放数)
+      likes: stat?.like_num || 0          // 获赞数
     };
   }
 
@@ -498,9 +507,10 @@
       let isAd = false;
       try {
         const space = await fetchSpaceInfo(uid);
+        console.log(`[清剿] UID ${uid} 空间信息:`, space);
         // 🆕 策略一：异常纯净画像识别
-        // 1. 检查“三无”特征：粉丝数、获赞数、播放数都极低
-        const isLowActivity = space.fans < 10 && space.likes < 10 && space.playNum < 10;
+        // 1. 检查“三无”特征：粉丝数、获赞数、视频数都极低
+        const isLowActivity = space.fans < 10 && space.likes < 10 && space.videos < 10;
 
         // 2. 检查动态内容：动态总数小于等于2且全部为纯转发
         const dynamic = await fetchLatestDynamic(uid);
@@ -746,10 +756,10 @@
     const rawLevel = item.level;
     const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
     const hasStrongSignal = window.AdDetector.hasStrongAdSignals ? window.AdDetector.hasStrongAdSignals(item.text) : false;
-    const needProfileCheck = !isHighLevel && !hasStrongSignal && !isUserMarked && score >= 40;
+    const needProfileCheck = !hasStrongSignal && !isUserMarked && score >= 40;
 
     if (score >= 40 || isUserMarked) {
-      if (hasStrongSignal || isUserMarked || isHighLevel) {
+      if (hasStrongSignal || isUserMarked) {
         showCleanerButton(item, el, isHighLevel, rawLevel);
         if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
       } else if (needProfileCheck) {
