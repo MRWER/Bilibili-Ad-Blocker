@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isBiliVideo = /bilibili\.com\/video\//.test(url);
 
     if (isBiliVideo) {
-      statusEl.innerHTML = '✅ <strong>已检测到 B站 视频页面</strong><br>插件正在运行。';
+      statusEl.innerHTML = '✅ <strong>已检测到 B站 视频页面</strong>插件正在运行。';
       statusEl.style.color = '#9df0b5';
 
       // 查询当前自动清剿状态

@@ -4,84 +4,234 @@
   <meta charset="utf-8">
   <style>
     body {
-      width: 340px; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 13px; line-height: 1.6; background: #1a1a24; color: #e0e0e0;
+      width: 340px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+      background: #1a1a24;
+      color: #e0e0e0;
     }
-    h2 { margin: 0 0 12px; font-size: 18px; color: #fb7299; }
-    .section { margin-bottom: 18px; }
-    .section-title { font-weight: 700; margin: 0 0 6px; color: #ffffff; font-size: 14px; }
-    ul { margin: 4px 0; padding-left: 18px; }
-    li { margin-bottom: 4px; }
-    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; color: #ffb86c; }
-    .warning { background: rgba(251,114,153,0.15); border-left: 4px solid #fb7299; padding: 10px 12px; border-radius: 6px; font-size: 12px; color: #ffc1cc; margin-bottom: 12px; }
-    .warning strong { color: #fb7299; }
-    .footer { margin-top: 18px; font-size: 11px; color: #888; }
-    a { color: #8fc9ff; text-decoration: none; }
-    .status-line { background: rgba(255,255,255,0.04); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; }
-
-    .auto-box { border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; margin-top: 16px; }
-    .checkbox-wrapper { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-    .checkbox-wrapper input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
-    .checkbox-wrapper label { cursor: pointer; font-weight: 600; }
-    .auto-status { font-size: 12px; color: #9df0b5; }
-    .small-btn { background: #2b6de5; color: #fff; border: 0; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 8px; }
-    textarea { width: 100%; background: #2a2a35; color: #e0e0e0; border: 1px solid #555; border-radius: 4px; padding: 6px; font-size: 12px; resize: vertical; }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: #fb7299;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section {
+      margin-bottom: 18px;
+    }
+    .section-title {
+      font-weight: 700;
+      margin: 0 0 6px;
+      color: #ffffff;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    ul {
+      margin: 4px 0;
+      padding-left: 18px;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+    code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #ffb86c;
+      font-size: 12px;
+    }
+    .warning {
+      background: rgba(251,114,153,0.12);
+      border-left: 4px solid #fb7299;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #ffc1cc;
+      margin-bottom: 12px;
+    }
+    .warning strong {
+      color: #fb7299;
+    }
+    .status-line {
+      background: rgba(255,255,255,0.04);
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .status-line .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9df0b5;
+      display: inline-block;
+    }
+    .status-line .dot.inactive {
+      background: #ffb86c;
+    }
+    .auto-box {
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 16px;
+      background: rgba(255,255,255,0.02);
+    }
+    .checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .checkbox-wrapper input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: #fb7299;
+    }
+    .checkbox-wrapper label {
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .auto-status {
+      font-size: 12px;
+      color: #9df0b5;
+      margin-top: 6px;
+    }
+    .small-btn {
+      background: #2b6de5;
+      color: #fff;
+      border: 0;
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .small-btn:hover {
+      background: #1e5bbf;
+    }
+    .small-btn.secondary {
+      background: #444b57;
+    }
+    .small-btn.secondary:hover {
+      background: #5a626d;
+    }
+    textarea {
+      width: 100%;
+      background: #2a2a35;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+      resize: vertical;
+      box-sizing: border-box;
+      margin-top: 8px;
+      outline: none;
+    }
+    textarea:focus {
+      border-color: #fb7299;
+    }
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: #888;
+      text-align: center;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 12px;
+    }
+    .flex-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
-  <h2>🛡️ B站评论区广告清剿</h2>
+  <h2>
+    <span>🛡️</span> B站评论区广告清剿
+  </h2>
 
-  <div class="status-line" id="status">等待 B站 页面...</div>
+  <!-- 页面状态指示 -->
+  <div class="status-line" id="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">正在检测页面...</span>
+  </div>
 
+  <!-- 核心能力说明 -->
   <div class="section">
-    <div class="section-title">📌 功能说明</div>
+    <div class="section-title">📌 主要功能</div>
     <ul>
-      <li>自动检测 B 站视频评论区中的可疑广告账号</li>
-      <li>在广告评论右侧插入 <code>🚫 清剿</code> 按钮</li>
-      <li>点击按钮即可自动拉黑该用户</li>
+      <li>智能识别评论区中的广告号（支持 AI 变种软广）</li>
+      <li>为可疑评论添加 <code>🚫 清剿</code> 按钮，一键拉黑</li>
+      <li>低等级账号（≤3级）直接拉黑，高等级仅提示</li>
     </ul>
   </div>
 
   <div class="section">
     <div class="section-title">🧠 检测能力</div>
     <ul>
-      <li>识别“求资源、礼拿、补字母、加速器”等软广话术</li>
-      <li>结合账号等级、行为模式综合评分</li>
-      <li>支持一级评论和展开后的楼中楼</li>
+      <li>关键词 + 用户画像（等级、默认头像）综合评分</li>
+      <li>空间二次验证：检查签名、动态、视频标题的引流词</li>
+      <li>异常纯净画像识别（粉丝/获赞/播放数极低、纯转发动态）</li>
+      <li>支持一级评论和楼中楼，实时监听评论区变化</li>
     </ul>
   </div>
 
+  <!-- 风险提示 -->
   <div class="warning">
     <strong>⚠️ 风险提示</strong><br>
-    本插件仅用于学习与研究目的。自动化操作可能违反 B站服务条款。<br>
-    建议使用小号测试，谨慎使用。插件不会上传任何数据。
+    本插件仅用于学习与研究。自动化操作可能违反 B站服务条款。<br>
+    插件不会上传任何数据，所有记录保存在本地。
   </div>
 
+  <!-- 自动清剿设置 -->
   <div class="auto-box">
     <div class="section-title">⚡ 自动清剿（实验性）</div>
     <div class="checkbox-wrapper">
       <input type="checkbox" id="autoCleanToggle">
-      <label for="autoCleanToggle">自动执行“清剿”操作（有误伤正常低级号的风险）</label>
+      <label for="autoCleanToggle">自动执行“清剿”操作</label>
     </div>
     <div class="auto-status" id="autoStatus"></div>
-    <p style="font-size:11px; color:#888; margin-top:8px;">勾选后将自动拉黑所有检测到的低等级广告账号（Lv≤3），每秒一个。高等级仅提示。</p>
+    <p style="font-size:11px; color:#888; margin-top:8px;">
+      勾选后，低等级广告账号（Lv≤3）将自动加入队列并每秒拉黑一个。高等级账号仅会提示，不会自动拉黑。
+    </p>
   </div>
 
+  <!-- 自定义词库管理 -->
   <div class="auto-box">
     <div class="section-title">📝 自定义词库</div>
-    <button id="editKeywordsBtn" class="small-btn">编辑词库</button>
-    <div id="keywordEditor" style="display:none; margin-top:8px;">
+    <p style="font-size:12px; color:#bfc7d5; margin:0 0 8px;">
+      通过页面上的 <code>📌 标记</code> 按钮可学习新词，也可在此手动编辑。
+    </p>
+    <button id="editKeywordsBtn" class="small-btn secondary">编辑词库</button>
+    <div id="keywordEditor" style="display:none;">
       <textarea id="keywordTextarea" rows="5" placeholder="一行一个关键词"></textarea>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <button id="saveKeywordsBtn" style="background:#28a745; color:#fff; border:0; border-radius:4px; padding:6px 12px; cursor:pointer;">保存</button>
-        <button id="cancelKeywordsBtn" style="background:#6c757d; color:#fff; border:0; border-radius:4px; padding:6px 12px; cursor:pointer;">取消</button>
+      <div class="flex-row">
+        <button id="saveKeywordsBtn" class="small-btn">保存</button>
+        <button id="cancelKeywordsBtn" class="small-btn secondary">取消</button>
       </div>
-      <p style="font-size:11px; color:#888; margin-top:6px;">一行一个关键词，保存后立即生效。修改后刷新页面也可生效。</p>
+      <p style="font-size:11px; color:#888; margin-top:6px;">修改后保存立即生效，页面会自动刷新识别规则。</p>
     </div>
   </div>
 
   <div class="footer">
-    v1.0 | 自用研究工具 | 按 Alt+B 切换侧边栏 (如果有)
+    v1.0 | 空间验证版 | 数据均存储于本地
   </div>
 
   <script src="popup.js"></script>

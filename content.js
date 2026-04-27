@@ -381,7 +381,15 @@
   // ========== 空间信息获取 ==========
   async function fetchSpaceInfo(uid) {
     const data = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
-    return { sign: normalizeText(data.sign || ''), name: data.name };
+    return {
+      sign: normalizeText(data.sign || ''),
+      name: data.name,
+      // 🆕 新增：用户统计数据
+      fans: data.fans || 0,      // 粉丝数
+      attention: data.attention || 0, // 关注数
+      likes: data.likes || 0,    // 获赞数
+      playNum: data.playNum || 0 // 播放数
+    };
   }
 
   async function fetchLatestDynamic(uid) {
@@ -389,11 +397,22 @@
       const data = await requestJson(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=${uid}`);
       const items = data.items || [];
       if (items.length === 0) return null;
+      
+      // 🆕 获取所有动态的类型信息
+      const dynamicTypes = items.map(item => item.type || '');
+      
+      // 取置顶或最新动态
       const topItem = items.find(item => item.top === 1 || item.modules?.module_tag?.text === '置顶');
       const item = topItem || items[0];
       const desc = item.modules?.module_dynamic?.desc?.text || '';
       const dynamicId = item.id_str || item.basic?.comment_id_str || '';
-      return { id: dynamicId, text: normalizeText(desc) };
+      return {
+        id: dynamicId,
+        text: normalizeText(desc),
+        // 🆕 新增：动态类型列表和动态总数
+        types: dynamicTypes,
+        totalCount: items.length
+      };
     } catch (e) {
       console.warn('[清剿] 获取动态失败', e);
       return null;
@@ -456,6 +475,22 @@
       let isAd = false;
       try {
         const space = await fetchSpaceInfo(uid);
+        // 🆕 策略一：异常纯净画像识别
+        // 1. 检查“三无”特征：粉丝数、获赞数、播放数都极低
+        const isLowActivity = space.fans < 10 && space.likes < 10 && space.playNum < 10;
+
+        // 2. 检查动态内容：动态总数小于等于2且全部为纯转发
+        const dynamic = await fetchLatestDynamic(uid);
+        const isAllForward = dynamic && 
+          dynamic.totalCount <= 2 && 
+          dynamic.types.length > 0 && 
+          dynamic.types.every(type => type === 'DYNAMIC_TYPE_FORWARD');
+
+        // 如果满足任一条件，直接判定为广告号
+        if (isLowActivity || isAllForward) {
+          isAd = true;
+          console.log('[清剿] 命中异常纯净画像识别规则');
+        }
         details.sign = space.sign;
         console.log(`[清剿] UID ${uid} 签名:`, space.sign);
         if (hasAdKeywords(space.sign)) {
@@ -463,7 +498,6 @@
           console.log('[清剿] 签名命中引流词');
         }
 
-        const dynamic = await fetchLatestDynamic(uid);
         if (dynamic) {
           details.dynamic = dynamic.text;
           console.log(`[清剿] UID ${uid} 最新动态:`, dynamic.text);
@@ -548,7 +582,7 @@
     el.dataset.markBtnAdded = 'true';
     const btn = document.createElement('span');
     btn.className = 'bili-ad-learner-btn';
-    btn.style.cssText = 'display:inline-flex; align-items:center; justify-content:center; margin-left:4px; color:#fff; background:#6c757d; border-radius:4px; width:22px; height:22px; font-size:13px; line-height:1; cursor:pointer; user-select:none; z-index:999; opacity:0.8; padding:0;';
+    btn.style.cssText = 'display:inline-flex; align-items:center; justify-content:center; margin-left:4px; color:#fff; background:#6c757d; border-radius:4px; width:16px; height:16px; font-size:11px; line-height:1; cursor:pointer; user-select:none; z-index:999; opacity:0.8; padding:0;';
     btn.textContent = '📌';
     btn.title = '标记为广告，并将关键词加入永久词库';
     btn.addEventListener('click', async (e) => {
@@ -659,7 +693,6 @@
   }
 
   async function tryAddButton(item) {
-    console.log('[清剿] 评测评论:', item.text, '(UID:', item.uid + ')');
     const el = item.element;
     if (!el) return;
     if (!window.AdDetector || typeof window.AdDetector.analyze !== 'function') return;
@@ -673,6 +706,7 @@
       if (!alreadyHasMark && !isUserMarked) addMarkButton(item, el);
       return;
     }
+    // console.log('[清剿] 评估评论:', item.text, '(UID ' + item.uid + ', Lv' + item.level + ')');
 
     let score = 0;
     if (isUserMarked) score = 100;
