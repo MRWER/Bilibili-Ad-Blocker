@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站评论区广告一键清剿",
-  "version": "1.0",
+  "version": "1.0.1",
   "description": "识别并一键举报、拉黑B站评论区中可疑的广告号。",
   "permissions": [
     "storage",
