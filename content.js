@@ -41,58 +41,6 @@
   // 获取元素标签名，并统一转换为大写格式。
   function getTagName(el) { return el?.tagName ? String(el.tagName).toUpperCase() : ''; }
 
-  // 尝试从评论组件实例或挂载数据中提取原始评论数据。
-  function getCommentData(el) {
-      if (!el) return null;
-      
-      // 尝试获取各种可能的 Vue 实例挂载点
-      const vueInstance = el.__vue__ || el._vue__ || el.__vue_app__ || el._data || null;
-      if (vueInstance) {
-          // 优先取 data，也可能是 _data
-          const data = vueInstance.data || vueInstance._data || vueInstance;
-          if (data) {
-              // 记录一下数据结构，便于调试
-              if (!el.__debugLogged) {
-                  console.log('[清剿] Vue 数据样本 (keys):', Object.keys(data).slice(0, 10));
-                  // 如果是回复，可能会有 reply 字段
-                  if (data.reply) {
-                      console.log('[清剿] 检测到 reply 数据，其 keys:', Object.keys(data.reply).slice(0, 10));
-                  }
-                  if (data.member) {
-                      console.log('[清剿] member 数据:', data.member);
-                  }
-                  el.__debugLogged = true; // 只打印一次
-              }
-              return data;
-          }
-      }
-      
-      // 尝试通过 __data 属性
-      if (el.__data) {
-          console.log('[清剿] 从 __data 获取到数据:', el.__data);
-          return el.__data;
-      }
-      
-      // 如果 el 是 bili-comment-thread-renderer，再深入一层 Shadow 尝试
-      if (el.tagName === 'BILI-COMMENT-THREAD-RENDERER') {
-          const sr = getOpenShadow(el);
-          if (sr) {
-              const commentRenderer = q(sr, 'bili-comment-renderer#comment');
-              if (commentRenderer) {
-                  const innerVue = commentRenderer.__vue__ || commentRenderer._vue__;
-                  if (innerVue) {
-                      const innerData = innerVue.data || innerVue._data || innerVue;
-                      console.log('[清剿] 从 comment-renderer 中获取到 Vue 数据 (keys):', Object.keys(innerData || {}).slice(0, 10));
-                      return innerData;
-                  }
-              }
-          }
-      }
-      
-      return null;
-  }
-
-
   // 从文本中拆解可学习的中文词、英文词和链接片段关键词。
   function extractKeywords(text) {
     if (!text) return [];
@@ -139,68 +87,8 @@
     return null;
   }
 
-  // 从评论数据对象中提取用户等级，兼容多种字段结构。
-  function extractLevelFromData(commentData) {
-      if (!commentData) return null;
-      
-      // 候选路径列表，根据实际 Vue 数据扩充
-      const candidates = [
-          // 通用结构
-          commentData?.member?.level_info?.current_level,
-          commentData?.member?.level_info?.currentLevel,
-          commentData?.reply_control?.user_level,
-          commentData?.member?.level,
-          commentData?.user_level,
-          commentData?.level,
-          commentData?.info?.level,
-          commentData?.info?.level_info?.current_level,
-          // 如果是回复，数据可能在 reply 字段内
-          commentData?.reply?.member?.level_info?.current_level,
-          commentData?.reply?.member?.level_info?.currentLevel,
-          commentData?.reply?.reply_control?.user_level,
-          commentData?.reply?.member?.level,
-          // 其他可能路径
-          commentData?.content?.member?.level_info?.current_level,
-          commentData?.member?.user_level,
-          commentData?.member?.info?.level,
-          commentData?.root?.member?.level_info?.current_level,
-          // 直接从 reply_control 获取
-          commentData?.reply_control?.level,
-          commentData?.reply_control?.current_level
-      ];
-      
-      for (const candidate of candidates) {
-          const level = Number(candidate);
-          if (Number.isFinite(level) && level > 0 && level <= 6) {
-              console.log('[清剿] 成功提取等级 Lv' + level, '来源:', commentData ? Object.keys(commentData).slice(0,5) : 'null');
-              return level;
-          }
-      }
-      
-      // 兜底：硬核会员
-      if (commentData?.member?.is_hardcore_vip === true || 
-          commentData?.member?.is_hardcore_vip === 1 ||
-          commentData?.reply?.member?.is_hardcore_vip === true ||
-          commentData?.reply?.member?.is_hardcore_vip === 1) {
-          console.log('[清剿] 检测到硬核会员，自动判定为 Lv6');
-          return 6;
-      }
-      
-      // 额外调试：如果仍未找到，输出 keys
-      if (commentData && !commentData.__levelDebugged) {
-          console.warn('[清剿] 无法提取等级，数据 keys:', Object.keys(commentData).slice(0, 15));
-          if (commentData.member) console.warn('[清剿] member keys:', Object.keys(commentData.member));
-          if (commentData.reply) console.warn('[清剿] reply keys:', Object.keys(commentData.reply));
-          commentData.__levelDebugged = true;
-      }
-      
-      return null;
-  }
-
   // 优先从渲染节点和等级图标中推断评论用户等级。
   function extractLevelFromRenderer(commentRenderer) {
-    const dataLevel = extractLevelFromData(getCommentData(commentRenderer));
-    if (dataLevel != null) return dataLevel;
     const sr = getOpenShadow(commentRenderer);
     if (!sr) return null;
     const infoHost = q(sr, 'bili-comment-user-info');
@@ -213,12 +101,12 @@
           let match = imgSrc.match(/level_(\w+)\.svg/i);  // "level_6.svg" 匹配到 "6", "level_h.svg" 匹配到 "h"
           if (match) {
             if (match[1] === 'h') {
-                console.log('[清剿] 从图标识别为硬核会员 Lv6');
+                // console.log('[清剿] 从图标识别为硬核会员 Lv6');
                 return 6;
             } else {
                 const level = Number(match[1]);
                 if (Number.isFinite(level)) {
-                    console.log('[清剿] 从图标提取到等级 Lv' + level);
+                    // console.log('[清剿] 从图标提取到等级 Lv' + level);
                     return level;
                 }
             }
@@ -265,50 +153,45 @@
 
   // 从评论节点中组装后续识别与操作所需的完整评论信息。
   function extractCommentDataFromTarget(target) {
-    const renderer = resolveCommentRenderer(target);
-    if (!renderer) return null;
-    const sr = getOpenShadow(renderer);
-    if (!sr) return null;
-    const dataSource = getCommentData(target) || getCommentData(renderer);
-    // 增加调试：如果 dataSource 为空，尝试从 renderer 再获取一次完整的 Vue 数据，并输出 keys，看看能否找到线索
-    if (!dataSource) {
-        const rendererData = getCommentData(renderer);
-        if (rendererData) {
-            console.log('[清剿] 从 renderer 获取到 Vue 数据 (keys):', Object.keys(rendererData).slice(0, 10));
-        } else {
-            // 安全地获取 uid（此时无法从 data 获取，尝试从链接提取）
-            const avatarLink = q(sr, '#user-avatar[href*="space.bilibili.com/"]') || q(sr, 'a[href*="space.bilibili.com/"]');
-            const uidFromLink = (avatarLink?.href || '').match(/space\.bilibili\.com\/(\d+)/);
-            const fallbackUid = uidFromLink ? uidFromLink[1] : '未知';
-            console.warn('[清剿] 未能从 target 或 renderer 获取到任何 Vue 数据，UID:', fallbackUid);
-        }
-    }
-    const infoHost = q(sr, 'bili-comment-user-info');
-    const infoSr = getOpenShadow(infoHost);
-    const nameLink = q(infoSr, '#user-name a') || q(infoSr, '#user-name') || q(sr, '#header a[href*="space.bilibili.com/"]');
-    const avatarLink = q(sr, '#user-avatar[href*="space.bilibili.com/"]') || q(sr, 'a[href*="space.bilibili.com/"]');
-    const uidFromData = dataSource?.mid || dataSource?.member?.mid || null;
-    const uidFromLinkMatch = (nameLink?.href || avatarLink?.href || '').match(/space\.bilibili\.com\/(\d+)/);
-    const uid = uidFromData ? String(uidFromData) : (uidFromLinkMatch ? uidFromLinkMatch[1] : null);
-    if (!uid) return null;
-    const richHost = q(sr, '#content bili-rich-text') || q(sr, '#reply-content bili-rich-text') || q(sr, '#body bili-rich-text') || q(sr, 'bili-rich-text');
-    const textFromData = normalizeText(dataSource?.content?.message || dataSource?.content?.text || '');
-    const text = textFromData || extractTextFromRichTextHost(richHost);
-    if (!text) return null;
-    const name = normalizeText(dataSource?.member?.uname || nameLink?.innerText || nameLink?.textContent || '未命名');
-    const level = extractLevelFromData(dataSource) ?? extractLevelFromRenderer(renderer);
-    let linkText = '';
-    try {
-      const linkRenderer = resolveCommentRenderer(target);
-      if (linkRenderer) {
-        const linkSr = getOpenShadow(linkRenderer);
-        if (linkSr) {
-          const allLinks = qa(linkSr, '#contents a, #reply-content a, bili-rich-text a');
-          if (allLinks.length > 0) linkText = allLinks.map(a => normalizeText(a.innerText || a.textContent || '')).filter(Boolean).join(' ');
-        }
-      }
-    } catch (e) {}
-    return { uid, name, text, level, linkText, element: target, actionHost: renderer };
+      const renderer = resolveCommentRenderer(target);
+      if (!renderer) return null;
+      const sr = getOpenShadow(renderer);
+      if (!sr) return null;
+
+      // 直接从 DOM 获取用户信息（不再依赖 Vue 数据）
+      const infoHost = q(sr, 'bili-comment-user-info');
+      const infoSr = getOpenShadow(infoHost);
+      const nameLink = q(infoSr, '#user-name a') || q(infoSr, '#user-name') || q(sr, '#header a[href*="space.bilibili.com/"]');
+      const avatarLink = q(sr, '#user-avatar[href*="space.bilibili.com/"]') || q(sr, 'a[href*="space.bilibili.com/"]');
+      const uidMatch = (nameLink?.href || avatarLink?.href || '').match(/space\.bilibili\.com\/(\d+)/);
+      const uid = uidMatch ? uidMatch[1] : null;
+      if (!uid) return null;
+
+      // 提取评论内容
+      const richHost = q(sr, '#content bili-rich-text') || q(sr, '#reply-content bili-rich-text') || q(sr, '#body bili-rich-text') || q(sr, 'bili-rich-text');
+      const text = extractTextFromRichTextHost(richHost);
+      if (!text) return null;
+
+      // 获取用户名
+      const name = normalizeText(nameLink?.innerText || nameLink?.textContent || '未命名');
+
+      // 提取等级（完全依赖 DOM 图标解析，已包含硬核会员识别）
+      const level = extractLevelFromRenderer(renderer);
+
+      // 提取链接文本（用于标记学习）
+      let linkText = '';
+      try {
+          const linkRenderer = resolveCommentRenderer(target);
+          if (linkRenderer) {
+              const linkSr = getOpenShadow(linkRenderer);
+              if (linkSr) {
+                  const allLinks = qa(linkSr, '#contents a, #reply-content a, bili-rich-text a');
+                  if (allLinks.length > 0) linkText = allLinks.map(a => normalizeText(a.innerText || a.textContent || '')).filter(Boolean).join(' ');
+              }
+          }
+      } catch (e) {}
+
+      return { uid, name, text, level, linkText, element: target, actionHost: renderer };
   }
 
   // ========== WBI 签名相关 ==========
