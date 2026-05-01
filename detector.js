@@ -6,7 +6,8 @@ const AdDetector = {
     { name: '虚假见证', regex: /(我之前|我本来|我朋友|闺蜜|舍友|同学).{0,10}(不信|结果|真的|竟然|发现|亲测|跟着)/i, score: 25 },
     { name: '谐音规避', regex: /[vV]\s*[我]\s*\d|扣\s*扣|微\s*信|q\s*q|群\s*号/i, score: 40 },
     { name: '主页/私信引流', regex: /(主页|空间|私聊|私信|简介|动态).{0,5}(有|看|见|给|发|留)/i, score: 30 },
-    { name: '可疑乱码链接', regex: /[?&]share_[a-z0-9]+|[^\s]{15,}\.com|[^\s]{8,}\.cn/i, score: 45 },
+    { name: '可疑乱码链接', regex: /[?&]share_[a-z0-9]{10,}|[^\s]{8,}\.cn/i, score: 45 },
+    { name: '可疑短链', regex: /(b23\.tv|t\.cn|dwz\.cn|suo\.im|fx\.bz)/i, score: 40 },
     { name: '求图求资源', regex: /(老师|楼主|up|作者|大佬).{0,4}(礼拿|礼貌拿|可以拿|求图|求原图|求资源|发一下|分享一下|可以发|发我|私发)/i, score: 30 },
     { name: '暗示离线获取', regex: /(想要|求|蹲).{0,3}(表情包|壁纸|头像|资源|教程|工具)|(我.{0,2}也.{0,2}(要|求))/i, score: 20 },
     { name: '补字母引流', regex: /(补上|补充|带上|猜|首字母|后\d*英文|后\d*字母|小英文|常用英文|字母缩写).{0,5}[a-z]{2,4}/i, score: 40 },
@@ -26,7 +27,8 @@ const AdDetector = {
 
   // 检测文本是否包含强广告信号（链接、明显联系方式）
   hasStrongAdSignals(text) {
-    const strongPattern = /(https?:\/\/|b23\.tv|VX|wx|qq|加群|扫码|进群|私聊|→戳|点击链接)/i;
+    // const strongPattern = /(https?:\/\/|b23\.tv|VX|wx|qq|加群|扫码|进群|私聊|→戳|点击链接)/i;
+    const strongPattern = /(b23\.tv|VX|wx|qq|加群|扫码|进群|私聊|→戳|点击链接)/i;
     return strongPattern.test(text);
   },
 

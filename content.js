@@ -43,12 +43,55 @@
 
   // 尝试从评论组件实例或挂载数据中提取原始评论数据。
   function getCommentData(el) {
-    if (!el) return null;
-    const vueInstance = el.__vue__ || el._vue__ || el.__vue_app__ || el._data || null;
-    if (vueInstance) return vueInstance.data || vueInstance._data || vueInstance;
-    if (el.__data) return el.__data;
-    return null;
+      if (!el) return null;
+      
+      // 尝试获取各种可能的 Vue 实例挂载点
+      const vueInstance = el.__vue__ || el._vue__ || el.__vue_app__ || el._data || null;
+      if (vueInstance) {
+          // 优先取 data，也可能是 _data
+          const data = vueInstance.data || vueInstance._data || vueInstance;
+          if (data) {
+              // 记录一下数据结构，便于调试
+              if (!el.__debugLogged) {
+                  console.log('[清剿] Vue 数据样本 (keys):', Object.keys(data).slice(0, 10));
+                  // 如果是回复，可能会有 reply 字段
+                  if (data.reply) {
+                      console.log('[清剿] 检测到 reply 数据，其 keys:', Object.keys(data.reply).slice(0, 10));
+                  }
+                  if (data.member) {
+                      console.log('[清剿] member 数据:', data.member);
+                  }
+                  el.__debugLogged = true; // 只打印一次
+              }
+              return data;
+          }
+      }
+      
+      // 尝试通过 __data 属性
+      if (el.__data) {
+          console.log('[清剿] 从 __data 获取到数据:', el.__data);
+          return el.__data;
+      }
+      
+      // 如果 el 是 bili-comment-thread-renderer，再深入一层 Shadow 尝试
+      if (el.tagName === 'BILI-COMMENT-THREAD-RENDERER') {
+          const sr = getOpenShadow(el);
+          if (sr) {
+              const commentRenderer = q(sr, 'bili-comment-renderer#comment');
+              if (commentRenderer) {
+                  const innerVue = commentRenderer.__vue__ || commentRenderer._vue__;
+                  if (innerVue) {
+                      const innerData = innerVue.data || innerVue._data || innerVue;
+                      console.log('[清剿] 从 comment-renderer 中获取到 Vue 数据 (keys):', Object.keys(innerData || {}).slice(0, 10));
+                      return innerData;
+                  }
+              }
+          }
+      }
+      
+      return null;
   }
+
 
   // 从文本中拆解可学习的中文词、英文词和链接片段关键词。
   function extractKeywords(text) {
@@ -98,14 +141,60 @@
 
   // 从评论数据对象中提取用户等级，兼容多种字段结构。
   function extractLevelFromData(commentData) {
-    if (!commentData) return null;
-    const candidates = [commentData?.member?.level_info?.current_level, commentData?.member?.level_info?.currentLevel, commentData?.reply_control?.user_level, commentData?.member?.level, commentData?.user_level, commentData?.level, commentData?.info?.level, commentData?.info?.level_info?.current_level, commentData?.content?.member?.level_info?.current_level];
-    for (const candidate of candidates) {
-      const level = Number(candidate);
-      if (Number.isFinite(level) && level > 0 && level <= 6) return level;
-    }
-    if (commentData?.member?.is_hardcore_vip === true || commentData?.member?.is_hardcore_vip === 1) return 6;
-    return null;
+      if (!commentData) return null;
+      
+      // 候选路径列表，根据实际 Vue 数据扩充
+      const candidates = [
+          // 通用结构
+          commentData?.member?.level_info?.current_level,
+          commentData?.member?.level_info?.currentLevel,
+          commentData?.reply_control?.user_level,
+          commentData?.member?.level,
+          commentData?.user_level,
+          commentData?.level,
+          commentData?.info?.level,
+          commentData?.info?.level_info?.current_level,
+          // 如果是回复，数据可能在 reply 字段内
+          commentData?.reply?.member?.level_info?.current_level,
+          commentData?.reply?.member?.level_info?.currentLevel,
+          commentData?.reply?.reply_control?.user_level,
+          commentData?.reply?.member?.level,
+          // 其他可能路径
+          commentData?.content?.member?.level_info?.current_level,
+          commentData?.member?.user_level,
+          commentData?.member?.info?.level,
+          commentData?.root?.member?.level_info?.current_level,
+          // 直接从 reply_control 获取
+          commentData?.reply_control?.level,
+          commentData?.reply_control?.current_level
+      ];
+      
+      for (const candidate of candidates) {
+          const level = Number(candidate);
+          if (Number.isFinite(level) && level > 0 && level <= 6) {
+              console.log('[清剿] 成功提取等级 Lv' + level, '来源:', commentData ? Object.keys(commentData).slice(0,5) : 'null');
+              return level;
+          }
+      }
+      
+      // 兜底：硬核会员
+      if (commentData?.member?.is_hardcore_vip === true || 
+          commentData?.member?.is_hardcore_vip === 1 ||
+          commentData?.reply?.member?.is_hardcore_vip === true ||
+          commentData?.reply?.member?.is_hardcore_vip === 1) {
+          console.log('[清剿] 检测到硬核会员，自动判定为 Lv6');
+          return 6;
+      }
+      
+      // 额外调试：如果仍未找到，输出 keys
+      if (commentData && !commentData.__levelDebugged) {
+          console.warn('[清剿] 无法提取等级，数据 keys:', Object.keys(commentData).slice(0, 15));
+          if (commentData.member) console.warn('[清剿] member keys:', Object.keys(commentData.member));
+          if (commentData.reply) console.warn('[清剿] reply keys:', Object.keys(commentData.reply));
+          commentData.__levelDebugged = true;
+      }
+      
+      return null;
   }
 
   // 优先从渲染节点和等级图标中推断评论用户等级。
@@ -121,8 +210,19 @@
         const levelImg = q(infoSr, '#user-level img') || q(infoSr, '.level-icon') || q(infoSr, '[class*="level"] img');
         if (levelImg) {
           const imgSrc = levelImg.getAttribute('src') || '';
-          let match = imgSrc.match(/level_(\d+)\.(?:svg|png)/i) || imgSrc.match(/lv(\d+)\.(?:svg|png)/i);
-          if (match) return Number(match[1]);
+          let match = imgSrc.match(/level_(\w+)\.svg/i);  // "level_6.svg" 匹配到 "6", "level_h.svg" 匹配到 "h"
+          if (match) {
+            if (match[1] === 'h') {
+                console.log('[清剿] 从图标识别为硬核会员 Lv6');
+                return 6;
+            } else {
+                const level = Number(match[1]);
+                if (Number.isFinite(level)) {
+                    console.log('[清剿] 从图标提取到等级 Lv' + level);
+                    return level;
+                }
+            }
+          }
         }
         const levelEl = q(infoSr, '#user-level') || q(infoSr, '[class*="level"]');
         if (levelEl) {
@@ -170,6 +270,19 @@
     const sr = getOpenShadow(renderer);
     if (!sr) return null;
     const dataSource = getCommentData(target) || getCommentData(renderer);
+    // 增加调试：如果 dataSource 为空，尝试从 renderer 再获取一次完整的 Vue 数据，并输出 keys，看看能否找到线索
+    if (!dataSource) {
+        const rendererData = getCommentData(renderer);
+        if (rendererData) {
+            console.log('[清剿] 从 renderer 获取到 Vue 数据 (keys):', Object.keys(rendererData).slice(0, 10));
+        } else {
+            // 安全地获取 uid（此时无法从 data 获取，尝试从链接提取）
+            const avatarLink = q(sr, '#user-avatar[href*="space.bilibili.com/"]') || q(sr, 'a[href*="space.bilibili.com/"]');
+            const uidFromLink = (avatarLink?.href || '').match(/space\.bilibili\.com\/(\d+)/);
+            const fallbackUid = uidFromLink ? uidFromLink[1] : '未知';
+            console.warn('[清剿] 未能从 target 或 renderer 获取到任何 Vue 数据，UID:', fallbackUid);
+        }
+    }
     const infoHost = q(sr, 'bili-comment-user-info');
     const infoSr = getOpenShadow(infoHost);
     const nameLink = q(infoSr, '#user-name a') || q(infoSr, '#user-name') || q(sr, '#header a[href*="space.bilibili.com/"]');
@@ -374,7 +487,7 @@
         const json = await res.json();
         if (json.code !== 0) {
           if (json.code === -412 || json.code === -509 || json.code === -799) {
-            console.warn('[清剿] 频率限制，等待后重试');
+            console.warn('[清剿] 频率限制，等待后重试', json.code);
             fetchQueue.unshift(task);
             setTimeout(() => processFetchQueue(), 2000);
           } else {
