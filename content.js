@@ -336,7 +336,7 @@
   // ========== 请求队列（节流 + 修正头部） ==========
   const fetchQueue = [];
   let fetchTimer = null;
-  const FETCH_DELAY = 1500;
+  const FETCH_DELAY = 2200; // 请求间隔，略高于官方限制，避免过快触发频率限制
 
   // 将请求压入节流队列，避免短时间内触发过多接口调用。
   function enqueueFetch(url, options = {}) {
@@ -370,9 +370,11 @@
         const json = await res.json();
         if (json.code !== 0) {
           if (json.code === -412 || json.code === -509 || json.code === -799) {
-            console.warn('[清剿] 频率限制，等待后重试', json.code);
+            // 生成 2~5 秒的随机退避时间，防止压制
+            const backoff = 2000 + Math.floor(Math.random() * 3000);
+            console.warn(`[清剿] 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`);
             fetchQueue.unshift(task);
-            setTimeout(() => processFetchQueue(), 2000);
+            setTimeout(() => processFetchQueue(), backoff);
           } else {
             throw new Error(json.message || 'API error');
           }
