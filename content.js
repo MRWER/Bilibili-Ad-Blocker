@@ -41,38 +41,156 @@
   // 获取元素标签名，并统一转换为大写格式。
   function getTagName(el) { return el?.tagName ? String(el.tagName).toUpperCase() : ''; }
 
-  // 从文本中拆解可学习的中文词、英文词和链接片段关键词。
+  // ─── extractKeywords 辅助常量（模块顶层，避免每次调用重建）──────────────
+
+  // 广告语义短语模式：优先从文本中提取有明确意义的引流词组（比 n-gram 精度高得多）
+  const _KW_SEMANTIC_PATTERNS = [
+    /(?:加|找|扫)?(?:微|薇|威)?信[\s:：]?[a-zA-Z0-9_\-]{4,20}/g,  // 微信号格式
+    /[qQｑＱ]{1,2}[\s:：]?\d{5,12}/g,                               // QQ 号
+    /(?:进|加|入)?群[\s:：]?\d{6,12}/g,                              // 群号
+    /[vVwW][xX][\s:：]?[a-zA-Z0-9_]{4,20}/g,                        // VX/WX 账号
+    /[Tt][Gg][\s:：@]?[a-zA-Z0-9_]{4,20}/g,                         // Telegram 账号
+    /[Dd]{2}[\s:：]?\d{4,}/g,                                        // DD+数字引流
+    /(?:私信|私聊|找我|加我|联系我).{0,6}(?:领|取|拿|要|获取)/g,
+    /(?:免费|白嫖|干货|福利|资源).{0,8}(?:私|群|戳|点|来|加)/g,
+    /(?:回复|评论|扣).{0,3}\d{1,4}.{0,6}(?:领|取|发|送)/g,
+    /(?:看|去|点).{0,2}(?:主页|简介|空间|动态).{0,4}(?:有|领|取|找)/g,
+  ];
+
+  // 中文高信号字符：广告评论中承载"动作/渠道"语义的核心字，仅在这些字周边提取 bigram
+  const _KW_CN_SIGNAL_CHARS = new Set([...'加进私看扣戳滴群微联发领取拿免赚佣单']);
+
+  // 中文停用单字（用于净化 bigram 原料，避免生成纯停用字的无意义词对）
+  const _KW_CN_STOP_CHARS = new Set([...'的了就也是在和有我你他她它啊呀吗呢吧哦哈嗯对好嘛哇喔']);
+
+  // 中文停用双字词
+  const _KW_CN_STOP_WORDS = new Set([
+    '可以','什么','怎么','为什么','觉得','还是','但是','因为','所以','如果',
+    '不过','只是','然后','已经','比较','非常','真的','这个','那个','一些',
+    '一个','自己','他们','我们','你们','没有','知道','出来','起来','过来',
+    '进去','就是','也是','不是','还有','的话','而已','而且','并且','一直',
+    '一样','感觉','现在','之后','之前','其实','不会','不要','一下','没啥',
+    '有点','有些','有没','好像','应该','只有','虽然','即使',
+  ]);
+
+  // 英文停用词（扩充版）
+  const _KW_EN_STOP_WORDS = new Set([
+    'a','an','the','is','are','was','were','be','been','being','have','has',
+    'had','do','does','did','will','would','could','should','may','might',
+    'shall','can','to','of','in','for','on','with','at','by','from','as',
+    'into','through','before','after','between','under','then','once','here',
+    'there','when','where','why','how','all','both','each','few','more',
+    'most','other','some','such','no','nor','not','only','same','so','than',
+    'too','very','and','but','or','if','because','until','while','this',
+    'that','these','those','am','it','its','he','she','they','we','you',
+    'i','me','my','your','his','her','our','their','just','also','even',
+    'over','about','like','well','what','make','them','who','one','two',
+    'get','go','see','now','new','say','take','want','use','find','give',
+  ]);
+
+  /**
+   * 从广告评论文本中提取高质量关键词，用于补充用户自定义词库。
+   *
+   * 四阶段策略（由高到低优先级）：
+   *   1. 预归一化：全角→半角、零宽字符清除、插空还原
+   *   2. 语义短语提取：直接命中引流结构（最具拦截价值）
+   *   3. 信号字周边 bigram：仅在高风险字符附近提取双字组合，非全量 n-gram
+   *   4. 英文词 + URL 关键段提取
+   *   后处理：噪声过滤 → 子串去冗余 → 截断至最多 20 个
+   *
+   * 对比原方案的改进：
+   *   - 原方案对全文做 2/3/4-gram，一条评论可生成数百词条，噪声极大
+   *   - 新方案优先语义匹配，bigram 只在信号字周边提取，词条数受控（通常 5-15 个）
+   *   - 更彻底的预归一化，避免全角/插空等变体词条漏网
+   *   - 子串去冗余：有"加微信群"时不再单独保留"微信""加微"等子串
+   */
   function extractKeywords(text) {
     if (!text) return [];
-    const normalized = normalizeText(text);
-    const cleanedChinese = normalized.replace(/[^\u4e00-\u9fa5]/g, '');
-    const chineseWords = new Set();
-    for (let len = 4; len >= 2; len--) {
-      for (let i = 0; i <= cleanedChinese.length - len; i++) {
-        chineseWords.add(cleanedChinese.substring(i, i + len));
+
+    // ── 阶段 1：预归一化 ────────────────────────────────────────────────────
+    let norm = normalizeText(text)
+      .replace(/[Ａ-Ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248 + 65))
+      .replace(/[ａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248 + 97))
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248 + 48))
+      .replace(/[\u200b-\u200f\u2060\ufeff\u00ad]/g, '')
+      .replace(/微\s+信/g, '微信')
+      .replace(/[Qq]\s+[Qq]/g, 'QQ')
+      .replace(/扣\s*扣/g, 'QQ')
+      .replace(/[vVwW][xX]/g, '微信')
+      .trim();
+
+    const result = new Set();
+
+    // ── 阶段 2：广告语义短语提取（优先级最高）──────────────────────────────
+    for (const pattern of _KW_SEMANTIC_PATTERNS) {
+      // 注意：同一个 global regex 需重置 lastIndex 或每次 clone；这里用 source 重建避免状态问题
+      const re = new RegExp(pattern.source, pattern.flags);
+      let m;
+      while ((m = re.exec(norm)) !== null) {
+        const phrase = m[0].replace(/\s/g, '').trim();
+        if (phrase.length >= 2) result.add(phrase);
       }
     }
-    const cnStopwords = new Set(['可以','什么','怎么','为什么','觉得','还是','但是','因为','所以','如果','不过','只是','然后','已经','比较','非常','真的','这个','那个','一些','一个','自己','他们','我们','你们','没有','知道','出来','起来','过来','进去','就是','也是','不是','还有','的话','而已','而且','并且']);
-    const cnResult = [...chineseWords].filter(w => w.length >= 2 && !cnStopwords.has(w));
-    const englishWords = normalized.match(/[a-zA-Z]{2,}/g) || [];
-    const enStopwords = new Set(['a','an','the','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','need','dare','ought','used','to','of','in','for','on','with','at','by','from','as','into','through','during','before','after','above','below','between','under','again','further','then','once','here','there','when','where','why','how','all','both','each','few','more','most','other','some','such','no','nor','not','only','own','same','so','than','too','very','and','but','or','if','because','as','until','while','this','that','these','those','am','it','its','he','she','they','we','you','i','me','my','your','his','her','our','their','mine','yours','hers']);
-    const enResult = [...new Set(englishWords)].map(w => w.toLowerCase()).filter(w => !enStopwords.has(w) && w.length >= 2);
-    const urls = normalized.match(/https?:\/\/[^\s]+/g) || [];
-    const urlKeywords = [];
-    for (const url of urls) {
-      try {
-        const u = new URL(url);
-        const hostParts = u.hostname.split('.');
-        if (hostParts.length >= 2) urlKeywords.push(hostParts[hostParts.length - 2]);
-        const pathParts = u.pathname.split('/').filter(p => p.length > 0);
-        for (const part of pathParts) {
-          if (/^[a-zA-Z0-9_-]+$/.test(part)) urlKeywords.push(part);
+
+    // ── 阶段 3：信号字周边中文 bigram（定向提取，非全量）───────────────────
+    const chineseOnly = norm.replace(/[^\u4e00-\u9fa5]/g, '');
+    // 先剔除停用单字，净化 bigram 原料
+    const cleanCN = chineseOnly.split('').filter(c => !_KW_CN_STOP_CHARS.has(c)).join('');
+
+    for (let i = 0; i < cleanCN.length; i++) {
+      if (!_KW_CN_SIGNAL_CHARS.has(cleanCN[i])) continue;
+      // 提取以信号字为中心的 2-gram 和 3-gram（左移一位 + 当前位）
+      for (const start of [i - 1, i]) {
+        if (start < 0) continue;
+        for (const len of [2, 3]) {
+          if (start + len > cleanCN.length) continue;
+          const chunk = cleanCN.substring(start, start + len);
+          if (!_KW_CN_STOP_WORDS.has(chunk)) result.add(chunk);
         }
-      } catch (e) {}
+      }
     }
-    const allWords = [...new Set([...cnResult, ...enResult, ...urlKeywords])];
-    if (allWords.length === 0 && normalized.length < 20) return [normalized];
-    return allWords;
+
+    // 若语义短语和信号字 bigram 均无结果，对全文做纯 bigram 兜底
+    // （仅对长度 ≤ 30 的短评生效，避免长文本产生大量噪声词）
+    if (result.size === 0 && cleanCN.length <= 30) {
+      for (let i = 0; i < cleanCN.length - 1; i++) {
+        const bigram = cleanCN.substring(i, i + 2);
+        if (!_KW_CN_STOP_WORDS.has(bigram)) result.add(bigram);
+      }
+    }
+
+    // ── 阶段 4a：英文词提取 ─────────────────────────────────────────────────
+    // 先剥离 URL，防止域名/参数污染词库
+    const normNoUrl = norm.replace(/https?:\/\/\S+/g, ' ');
+    const englishWords = normNoUrl.match(/[a-zA-Z]{3,}/g) || [];
+    for (const w of [...new Set(englishWords)]) {
+      const lw = w.toLowerCase();
+      if (!_KW_EN_STOP_WORDS.has(lw)) result.add(lw);
+    }
+
+
+    // ── 阶段 5：后处理 ──────────────────────────────────────────────────────
+    let words = [...result].filter(kw =>
+      kw.length >= 2 &&               // 最短两字
+      !/^\d{1,3}$/.test(kw) &&        // 纯短数字无意义
+      !/^(.)\1+$/.test(kw)            // 重复单字无意义（如"哈哈哈"→"哈哈"）
+    );
+
+    // 子串去冗余：若较短词已被较长词完整包含，则舍弃较短词
+    // 例：有"加微信群"时，"微信"和"加微"作为冗余词被移除
+    words.sort((a, b) => b.length - a.length);
+    const deduped = [];
+    for (const kw of words) {
+      if (!deduped.some(longer => longer.includes(kw))) {
+        deduped.push(kw);
+      }
+    }
+
+    // 最多返回 20 个关键词，防止少数超长评论污染词库
+    const final = deduped.slice(0, 20);
+
+    if (final.length === 0 && norm.length < 20) return [norm];
+    return final;
   }
 
   // 评论区宿主
@@ -372,7 +490,7 @@
           if (json.code === -412 || json.code === -509 || json.code === -799) {
             // 生成 2~5 秒的随机退避时间，防止压制
             const backoff = 2000 + Math.floor(Math.random() * 3000);
-            console.warn(`[清剿] 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`);
+            console.log(`[清剿] 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`);
             fetchQueue.unshift(task);
             setTimeout(() => processFetchQueue(), backoff);
           } else {
@@ -493,9 +611,11 @@
 
   // 结合空间签名、动态、评论和投稿信息判断账号是否疑似广告号。
   async function checkUserProfile(uid) {
+    // 缓存命中：直接返回，不排队
     const cached = profileCache.get(uid);
     if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.result;
 
+    // 同一 UID 已在检测中：复用同一个 promise
     if (pendingProfileChecks.has(uid)) {
       return pendingProfileChecks.get(uid);
     }
@@ -629,9 +749,19 @@
       let newWords = [];
       const hasLinkText = item.linkText && item.linkText.trim().length > 0;
       const sourceText = hasLinkText ? item.linkText : item.text;
-      if (hasLinkText) newWords = extractKeywords(sourceText);
-      else if (item.text.length <= 80) newWords = extractKeywords(item.text);
-      else {
+      // 剥离 URL 后的纯文字长度：URL 不算“内容”，不应撑高字数触发弹窗
+      const textWithoutUrls = (item.text || '').replace(/https?:\/\/\S+/g, '').trim();
+
+      if (hasLinkText) {
+        // linkText 是 DOM 提取的 <a> 链接文本，直接提取
+        newWords = extractKeywords(sourceText);
+      } else if (textWithoutUrls.length <= 120) {
+        // 去掉 URL 后剩余文字不超过 120 字：直接从全文提取
+        // extractKeywords 内部会自动剥离 URL，只对中文话术做关键词提取
+        // “注册领1000RH币”、“免费生成”这类广告话术能被正确学习
+        newWords = extractKeywords(item.text);
+      } else {
+        // 去掉 URL 后剩余文字仍超 120 字（确实是超长评论）：才弹窗让用户指定核心词
         newWords = promptForKeywords(item);
         if (!newWords) { learnBtn.textContent = '📌'; learnBtn.style.background = '#6c757d'; learnBtn.style.pointerEvents = 'auto'; return; }
       }
@@ -731,6 +861,40 @@
   }
 
   // 评估评论风险，并决定是否展示按钮或触发空间复核。
+  // 从页面获取当前视频的 UP 主 UID，结果会被缓存
+  // 策略： __INITIAL_STATE__ → 页面 DOM 链接 → 放弃（本地取，不接口请求）
+  let _videoOwnerUid = undefined; // undefined = 未尝试, null = 取不到, string = 有效 UID
+  function getVideoOwnerUid() {
+    if (_videoOwnerUid !== undefined) return _videoOwnerUid;
+
+    // 方法 1：__INITIAL_STATE__（视频页 window.__INITIAL_STATE__.videoData.owner.mid）
+    try {
+      const state = window.__INITIAL_STATE__;
+      const mid =
+        state?.videoData?.owner?.mid ||
+        state?.upData?.mid ||
+        state?.mediaInfo?.up_info?.mid;
+      if (mid) { _videoOwnerUid = String(mid); return _videoOwnerUid; }
+    } catch {}
+
+    // 方法 2：从视频作者主页链接提取（/space/<uid>）
+    try {
+      const authorLink =
+        document.querySelector('.up-info-container a[href*="/space/"]') ||
+        document.querySelector('.video-author-name[href*="/space/"]') ||
+        document.querySelector('a.username[href*="/space/"]') ||
+        document.querySelector('[class*="up"] a[href*="space.bilibili.com"]');
+      if (authorLink) {
+        const match = authorLink.href.match(/(?:space\.bilibili\.com|bilibili\.com\/space)\/?(\d+)/);
+        if (match) { _videoOwnerUid = match[1]; return _videoOwnerUid; }
+      }
+    } catch {}
+
+    // 两种方法均失败（如直播间/番剧页等非标准视频页）：不阻塞，返回 null
+    _videoOwnerUid = null;
+    return null;
+  }
+
   async function tryAddButton(item) {
     const el = item.element;
     if (!el) return;
@@ -754,10 +918,25 @@
     const rawLevel = item.level;
     const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
     const hasStrongSignal = window.AdDetector.hasStrongAdSignals ? window.AdDetector.hasStrongAdSignals(item.text) : false;
-    const needProfileCheck = !hasStrongSignal && !isUserMarked && score >= 40;
+
+    // UP 主在自己视频下发带链接的置顶评论是正常行为，不能被 hasStrongSignal 直接拦截
+    // 取视频 UP 主 UID：优先读 __INITIAL_STATE__，免去 API 请求
+    const videoOwnerUid = getVideoOwnerUid();
+    const isVideoOwner = videoOwnerUid !== null && String(item.uid) === String(videoOwnerUid);
+
+    // 三种情况需要二次确认（空间检测）：
+    //   1. 命中 hasStrongSignal 且是视频 UP 主（置顶带链接是正常行为）
+    //   2. 未命中 hasStrongSignal 且分数 >= 40（原有逻辑）
+    //   3. 用户手动标记且是 UP 主（额外保险）
+    const needProfileCheck = (
+      (hasStrongSignal && isVideoOwner) ||
+      (!hasStrongSignal && !isUserMarked && score >= 40) ||
+      (isUserMarked && isVideoOwner)
+    );
 
     if (score >= 40 || isUserMarked) {
-      if (hasStrongSignal || isUserMarked) {
+      // 命中强信号且不是 UP 主，或者用户手动标记且不是 UP 主：直接标记
+      if ((hasStrongSignal && !isVideoOwner) || (isUserMarked && !isVideoOwner)) {
         showCleanerButton(item, el, isHighLevel, rawLevel);
         if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
       } else if (needProfileCheck) {
