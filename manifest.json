@@ -10,9 +10,6 @@
     "cookies"
   ],
   "host_permissions": [
-    "https://api.bilibili.com/*",
-    "https://space.bilibili.com/*",
-    "https://www.bilibili.com/*",
     "https://*.bilibili.com/*"
   ],
   "action": {
