@@ -767,7 +767,19 @@
       }
       if (newWords.length === 0) newWords = [sourceText.trim()].filter(t => t.length > 0);
       if (newWords.length === 0) { alert('未能提取到关键词。'); learnBtn.textContent = '📌'; learnBtn.style.background = '#6c757d'; learnBtn.style.pointerEvents = 'auto'; return; }
-      await updateUserKeywords(newWords);
+      // 判断贝叶斯是否已就绪
+      const bayesReady = window.BayesClassifier && window.BayesClassifier.isReady();
+      if (!bayesReady) {
+          // 贝叶斯样本不足，仍然使用词库学习
+          await updateUserKeywords(newWords);
+      } else {
+          console.log("[贝叶斯] 样本已充足，不再更新词库");
+      }
+      if (window.BayesClassifier) {
+          const features = window.AdDetector.extractFeatures(sourceText);
+          window.BayesClassifier.update(features, 'ad');
+          console.log("[贝叶斯] 学习正样本（广告）");
+      }
       el.dataset.adUserMarked = 'true';
       learnBtn.remove();
       const oldCleaner = el.querySelector('.bili-ad-cleaner-btn');
@@ -895,6 +907,18 @@
     return null;
   }
 
+  // 新增函数：添加负样本
+  async function addNegativeSample(item) {
+      if (!window.BayesClassifier) return;
+      // 避免重复学习（用元素数据集标记）
+      if (item.element && item.element.dataset.bayesNegative === "true") return;
+      if (item.element) item.element.dataset.bayesNegative = "true";
+      
+      const features = window.AdDetector.extractFeatures(item.text);
+      window.BayesClassifier.update(features, 'normal');
+      console.log("[贝叶斯] 学习负样本（正常）");
+  }
+
   async function tryAddButton(item) {
     const el = item.element;
     if (!el) return;
@@ -910,10 +934,14 @@
       return;
     }
     // console.log('[清剿] 评估评论:', item.text, '(UID ' + item.uid + ', Lv' + item.level + ')');
-
+    // 提取特征（用于贝叶斯）
+    let features = null;
+    if (window.BayesClassifier && window.BayesClassifier.isReady()) {
+        features = window.AdDetector.extractFeatures(item.text);
+    }
     let score = 0;
     if (isUserMarked) score = 100;
-    else score = window.AdDetector.analyze({ content: item.text, level: item.level, avatarUrl: '' });
+    else score = await window.AdDetector.analyze({ content: item.text, level: item.level, avatarUrl: '', features: features});
 
     const rawLevel = item.level;
     const isHighLevel = rawLevel === null || rawLevel === undefined || rawLevel >= 4;
@@ -957,22 +985,28 @@
           if (error) {
             console.warn('[清剿] 空间检测失败，回退显示清剿按钮', error);
             // 回退：按原规则显示按钮
-            showCleanerButton(item, el, false, rawLevel);
+            showCleanerButton(item, el, isHighLevel, rawLevel);
             if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
           } else if (isAd) {
             console.log('[清剿] 空间检测确认广告，显示按钮');
-            showCleanerButton(item, el, false, rawLevel);
+            showCleanerButton(item, el, isHighLevel, rawLevel);
             if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
           } else {
             console.log('[清剿] 空间正常，取消广告标记');
             // 🔧 关键修复：标记为已处理，防止重复扫描
             el.dataset.adCleanerProcessed = 'true';
+            // 延迟5秒后学习为负样本（避免用户随后又标记）
+            setTimeout(() => {
+                if (el && !el.dataset.adUserMarked) { // 确保未被手动标记为广告
+                    addNegativeSample(item);
+                }
+            }, 5000);
           }
         }).catch(err => {
           if (placeholder) placeholder.remove();
           delete el.dataset.adProfilePending;
           console.error('[清剿] 空间检测异常，回退显示按钮', err);
-          showCleanerButton(item, el, false, rawLevel);
+          showCleanerButton(item, el, isHighLevel, rawLevel);
           if (!isHighLevel && !el.dataset.adBlocked) enqueueAutoClean(item);
         });
       }
@@ -1100,6 +1134,17 @@
     } else if (request.action === 'updateKeywords') {
       initUserKeywords();
       sendResponse({ ok: true });
+    } else if (request.action === 'resetBayes') {
+        (async () => {
+            if (window.BayesClassifier) {
+                await window.BayesClassifier.reset();
+                console.log("[贝叶斯] 模型已重置");
+                sendResponse({ ok: true });
+            } else {
+                sendResponse({ ok: false, error: "BayesClassifier 未初始化" });
+            }
+        })();
+        return true; // 异步响应
     }
   });
 
@@ -1176,6 +1221,12 @@
     if (window.AdDetector && typeof window.AdDetector.setUserKeywords === 'function') window.AdDetector.setUserKeywords(userKeywords);
   }
 
+  // 初始化贝叶斯分类器
+  async function initBayesClassifier() {
+      window.BayesClassifier = await IncrementalNaiveBayes.load();
+      console.log("[贝叶斯] 分类器已加载，样本数:", window.BayesClassifier.totalDocs);
+  }
+
   // 从评论宿主开始建立 Shadow DOM 监听链路。
   function startObservingShadow() {
     const host = getCommentsHost();
@@ -1185,9 +1236,25 @@
     observeShadowRootRecursively(sr);
   }
 
+  // 当贝叶斯样本数达到最小采样值时，自动清空用户词库（不再依赖关键词）
+  async function maybeClearUserKeywords() {
+      if (window.BayesClassifier && window.BayesClassifier.isReady()) {
+          const { userKeywords } = await chrome.storage.local.get('userKeywords');
+          if (userKeywords && userKeywords.length > 0) {
+              await chrome.storage.local.set({ userKeywords: [] });
+              if (window.AdDetector && typeof window.AdDetector.setUserKeywords === 'function') {
+                  window.AdDetector.setUserKeywords([]);
+              }
+              console.log('[贝叶斯] 样本数已达最小采样值，已自动清空用户词库（后续不再依赖关键词）');
+          }
+      }
+  }
+
   // 等待评论区挂载完成后，初始化词库并启动评论监听。
   async function waitForHost() {
     await initUserKeywords();
+    await initBayesClassifier();
+    await maybeClearUserKeywords();   // 新增：贝叶斯样本充足时清空词库
     if (getCommentsHost()) { startObservingShadow(); return; }
     const bodyObserver = new MutationObserver(() => {
       if (getCommentsHost()) { bodyObserver.disconnect(); startObservingShadow(); }
