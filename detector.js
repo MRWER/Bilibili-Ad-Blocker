@@ -7,7 +7,7 @@ const AdDetector = {
         [/威(?=信|号)/g, "微"],
         [/讯(?=息)|讯$/g, "信"],
         [/扣\s*扣|叩\s*叩/g, "QQ"],
-        [/[Vv][Xx]|[Ww][Xx]/g, "微信"],
+        // [/[Vv][Xx]|[Ww][Xx]/g, "微信"],
         [/[Tt][Gg]\b/g, "Telegram"],
         [/[Dd][Dd](\d)/g, "私信$1"],
         [/[Ａ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 65)],
@@ -69,7 +69,7 @@ const AdDetector = {
 
     hasStrongAdSignals(text) {
         const t = this._normalize(text);
-        return /(微信|QQ群?|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|\d{6,})/i.test(t);
+        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|\d{6,})/i.test(t);
     },
 
     // 规则评分 (0-100)

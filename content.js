@@ -611,42 +611,48 @@
 
   // 结合空间签名、动态、评论和投稿信息判断账号是否疑似广告号。
   async function checkUserProfile(uid) {
-    // 缓存命中：直接返回，不排队
     const cached = profileCache.get(uid);
     if (cached && Date.now() - cached.time < CACHE_DURATION) return cached.result;
-
-    // 同一 UID 已在检测中：复用同一个 promise
-    if (pendingProfileChecks.has(uid)) {
-      return pendingProfileChecks.get(uid);
-    }
+    if (pendingProfileChecks.has(uid)) return pendingProfileChecks.get(uid);
 
     const promise = (async () => {
       const details = { sign: null, dynamic: null, dynamicComments: [], video: null, empty: false };
       let isAd = false;
       try {
+        // 1. 获取空间基本信息（两个接口并行，但受队列控制，仍为两个请求）
         const space = await fetchSpaceInfo(uid);
         console.log(`[清剿] UID ${uid} 空间信息:`, space);
-        // 🆕 策略一：异常纯净画像识别
-        // 1. 检查“三无”特征：粉丝数、获赞数、视频数都极低
+
+        // 检查低活跃画像（三无账号）
         const isLowActivity = space.fans < 10 && space.likes < 10 && space.videos < 10;
-
-        // 2. 检查动态内容：动态总数小于等于2且全部为纯转发
-        const dynamic = await fetchLatestDynamic(uid);
-        const isAllForward = dynamic && 
-          dynamic.totalCount <= 2 && 
-          dynamic.types.length > 0 && 
-          dynamic.types.every(type => type === 'DYNAMIC_TYPE_FORWARD');
-
-        // 如果满足任一条件，直接判定为广告号
-        if (isLowActivity || isAllForward) {
+        if (isLowActivity) {
           isAd = true;
-          console.log('[清剿] 命中异常纯净画像识别规则');
+          console.log('[清剿] 命中异常纯净画像识别规则（低活跃）');
         }
+
         details.sign = space.sign;
         console.log(`[清剿] UID ${uid} 签名:`, space.sign);
         if (hasAdKeywords(space.sign)) {
           isAd = true;
           console.log('[清剿] 签名命中引流词');
+        }
+
+        // ✅ 关键优化：如果已经判定为广告，直接返回，不再请求动态和视频
+        if (isAd) {
+          const result = { isAd, details };
+          profileCache.set(uid, { result, time: Date.now() });
+          return result;
+        }
+
+        // 2. 获取最新动态（仅在空间信息未判定广告时执行）
+        const dynamic = await fetchLatestDynamic(uid);
+        const isAllForward = dynamic &&
+          dynamic.totalCount <= 2 &&
+          dynamic.types.length > 0 &&
+          dynamic.types.every(type => type === 'DYNAMIC_TYPE_FORWARD');
+        if (isAllForward) {
+          isAd = true;
+          console.log('[清剿] 命中异常纯净画像识别规则（纯转发动态）');
         }
 
         if (dynamic) {
@@ -666,6 +672,15 @@
             }
           }
         }
+
+        // ✅ 再次检查是否已判定为广告，若是则跳过视频请求
+        if (isAd) {
+          const result = { isAd, details };
+          profileCache.set(uid, { result, time: Date.now() });
+          return result;
+        }
+
+        // 3. 获取最新视频标题（仅在之前未判定广告时执行）
         const videoTitle = await fetchLatestVideo(uid);
         if (videoTitle) {
           details.video = videoTitle;
@@ -676,13 +691,14 @@
           }
         }
 
+        // 4. 完全空空间判定
         if (!space.sign && !dynamic && !videoTitle) {
           isAd = true;
           details.empty = true;
           console.log('[清剿] 空间为空，判定为广告号');
         }
       } catch (e) {
-        console.error(`[清剿] 空间检查失败 (UID ${uid})`, e);
+        console.warn(`[清剿] 空间检查失败 (UID ${uid})`, e);
         return { isAd: null, details, error: e.message };
       }
       const result = { isAd, details };

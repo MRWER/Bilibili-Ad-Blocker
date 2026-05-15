@@ -10,7 +10,9 @@ package/
 # 若使用 web-ext 打包则忽略
 web-ext-artifacts/
 # 临时文件        
-*.bak                     
+*.bak 
+# 测试文件
+*test.js                    
 
 # ================= 通用开发/系统文件 =================
 node_modules/
