@@ -34,7 +34,8 @@ const AdDetector = {
         { name: "利益诱导+行动", score: 35, regex: /(免费|白嫖|领取|干货|资源|教程|方法|攻略|资料|福利|礼包).{0,12}(私|戳|扣|加|点|来|滴滴|dd|关注|群)/i },
         { name: "虚假紧迫感", score: 20, regex: /(名额|位置|只剩|最后|马上|快要|就要|即将|错过|再等).{0,5}(了|！|\d)/i },
         { name: "虚假见证", score: 25, regex: /(我之前|我本来|我朋友|闺蜜|舍友|同学|室友|媳妇).{0,12}(不信|结果|真的|竟然|发现|亲测|跟着|才知道)/i },
-        { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|扣\s*扣|微\s*信|q\s*q|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
+        // { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|扣\s*扣|微\s*信|q\s*q|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
+        { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|(?:扣\s*扣|q\s*q)\s*(?:群|号|\d+)|微\s*信|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
         { name: "主页/私信引流", score: 30, regex: /(主页|空间|私聊|私信|简介|动态|链接).{0,5}(有|看|见|给|发|留|找)/i },
         { name: "可疑链接参数", score: 45, regex: /[?&]share_[a-z0-9]{10,}|[^\s]{8,}\.cn\b/i },
         { name: "可疑短链", score: 40, regex: /(b23\.tv|t\.cn|dwz\.cn|suo\.im|fx\.bz|mrw\.so|url\.cn|tb\.cn)/i },
@@ -69,7 +70,7 @@ const AdDetector = {
 
     hasStrongAdSignals(text) {
         const t = this._normalize(text);
-        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|\d{6,})/i.test(t);
+        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接)/i.test(t);
     },
 
     // 规则评分 (0-100)
