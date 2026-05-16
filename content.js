@@ -112,7 +112,9 @@
     const SEXY_VIDEO_KEYWORDS = [
         "扭扭臀", "放松一下", "乱跳的舞", "开心就好", "臀", "翘臀", "热舞", "性感", 
         "瑜伽裤", "扭胯", "夹腿", "摇", "抖", "福利", "诱惑", "美女", "小姐姐",
-        "屁股", "蜜桃", "曲线", "身姿", "婀娜", "妖娆", "跳舞", "舞蹈"
+        "屁股", "蜜桃", "曲线", "身姿", "婀娜", "妖娆", "跳舞", "舞蹈","打给我", 
+        "进来了吗", "可以吗", "是你喜欢的类型", "就一次", "今晚一起", "喜欢吗", 
+        "喜欢就点", "喜欢就赞", "喜欢就关注","今晚", "一次", "喜欢", "类型", 
     ];
 
     /**
@@ -357,6 +359,11 @@
             nameLink?.innerText || nameLink?.textContent || "未命名",
         );
 
+        // test
+        if (name === "卡Q思") {
+            console.log("[清剿] 测试用户评论文本：", text);
+        }
+
         // 提取等级（完全依赖 DOM 图标解析，已包含硬核会员识别）
         const level = extractLevelFromRenderer(renderer);
 
@@ -384,12 +391,29 @@
             }
         } catch (e) {}
 
+        // 检测是否为大会员（通过链接颜色）
+        let isVip = false;
+        if (nameLink && nameLink.tagName === 'A') {
+            const style = nameLink.getAttribute('style');
+            if (style && /color:\s*#FB7299/i.test(style)) {
+                isVip = true;
+            }
+            // 备用：计算实际颜色（以防内联样式被覆盖）
+            if (!isVip) {
+                const color = window.getComputedStyle(nameLink).color;
+                if (color === 'rgb(251, 114, 153)') {
+                    isVip = true;
+                }
+            }
+        }
+
         return {
             uid,
             name,
             text,
             level,
             linkText,
+            isVip,
             element: target,
             actionHost: renderer,
         };
@@ -700,8 +724,8 @@
                         json.code === -509 ||
                         json.code === -799
                     ) {
-                        // 生成 2~5 秒的随机退避时间，防止压制
-                        const backoff = 2000 + Math.floor(Math.random() * 3000);
+                        // 生成 1~4 秒的随机退避时间，防止压制
+                        const backoff = 1000 + Math.floor(Math.random() * 3000);
                         console.log(
                             `[清剿] 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`,
                         );
@@ -773,12 +797,17 @@
             const item = topItem || items[0];
             const desc = item.modules?.module_dynamic?.desc?.text || "";
             const dynamicId = item.id_str || item.basic?.comment_id_str || "";
+            // 直接从 basic 中提取评论所需参数
+            const commentOid = item.basic?.comment_id_str || "";
+            const commentType = item.basic?.comment_type || 0;
             return {
                 id: dynamicId,
                 text: normalizeText(desc),
                 // 🆕 新增：动态类型列表和动态总数
                 types: dynamicTypes,
                 totalCount: items.length,
+                commentOid: commentOid,
+                commentType: commentType,
             };
         } catch (e) {
             console.warn("[清剿] 获取动态失败", e);
@@ -787,17 +816,18 @@
     }
 
     // 抓取最新动态下的少量评论文本，用于二次广告检测。
-    async function fetchDynamicComments(dynamicId) {
+    async function fetchDynamicComments(commentOid, commentType) {
+        if (!commentOid || !commentType) return [];
         try {
-            const data = await requestJson(
-                `https://api.bilibili.com/x/v2/reply?type=17&oid=${dynamicId}&pn=1&ps=3`,
-            );
+            const url = `https://api.bilibili.com/x/v2/reply?type=${commentType}&oid=${commentOid}&pn=1&ps=3`;
+            const data = await requestJson(url);
             const replies = data.replies || [];
             const texts = replies
                 .map((r) => normalizeText(r.content?.message || ""))
                 .filter(Boolean);
             return texts;
         } catch (e) {
+            console.warn("[清剿] 获取动态评论失败", e);
             return [];
         }
     }
@@ -822,7 +852,11 @@
             const data = await requestJson(url);
             const vlist = data.list?.vlist || [];
             if (vlist.length === 0) return null;
-            return normalizeText(vlist[0].title || "");
+            const latest = vlist[0];
+            return {
+                title: normalizeText(latest.title || ""),
+                created: latest.created   // 秒级时间戳
+            };
         } catch (e) {
             console.warn("[清剿] 获取视频投稿失败", e);
             return null;
@@ -851,6 +885,8 @@
         if (/\bby\s*[#\w\u4e00-\u9fa5]/.test(t)) return true;
         // 其他特定短语
         if (/想通了|说不上爱别说话|就一点喜欢|当一回好人/.test(t)) return true;
+        // 纯数字串（6-10位），且不是常见年份
+        if (/\b\d{6,10}\b/.test(t) && !/\b(19|20)\d{2}\b/.test(t)) return true;
 
         return false;
     }
@@ -913,6 +949,9 @@
         }
         // 模式匹配：动词+身体部位（如扭腰、抖臀）
         if (/(扭|摇|抖|晃|摆|撅).{0,2}(臀|腰|胯|腿|屁股)/.test(t)) return true;
+        // 新增性暗示短语模式（直接匹配常见撩拨语句）
+        if (/(打给我|进来了吗|可以吗|是你喜欢的类型|就一次|跳得还行吗|今晚.*打给我|一次好吗)/i.test(t)) return true;
+
         return false;
     }
 
@@ -979,12 +1018,12 @@
                 if (dynamic) {
                     details.dynamic = dynamic.text;
                     console.log(`[清剿] UID ${uid} 最新动态:`, dynamic.text);
-                if (!isAd && isAdText(dynamic.text)) {
+                    if (!isAd && isAdText(dynamic.text)) {
                         isAd = true;
-                    console.log("[清剿] 动态命中广告规则");
+                        console.log("[清剿] 动态命中广告规则");
                     }
                     if (!isAd) {
-                        const comments = await fetchDynamicComments(dynamic.id);
+                        const comments = await fetchDynamicComments(dynamic.commentOid, dynamic.commentType);
                         details.dynamicComments = comments;
                         console.log(`[清剿] UID ${uid} 动态评论:`, comments);
                     // 对每条动态评论也使用增强检测
@@ -1003,10 +1042,15 @@
                 }
 
                 // 3. 获取最新视频标题（仅在之前未判定广告时执行）
-                const videoTitle = await fetchLatestVideo(uid);
-                if (videoTitle) {
+                const videoInfo = await fetchLatestVideo(uid);
+                const videoTitle = videoInfo?.title;
+                if (videoInfo) {
                     details.video = videoTitle;
-                    console.log(`[清剿] UID ${uid} 最新视频:`, videoTitle);
+                    const now = Math.floor(Date.now() / 1000);
+                    const daysSinceLastVideo = (now - videoInfo.created) / 86400;
+                    console.log(`[清剿] UID ${uid} 最新视频:`, videoInfo.title, `发布于 ${Math.floor(daysSinceLastVideo)} 天前`);
+
+                    // 标题广告检测
                     if (!isAd && isAdText(videoTitle)) {
                         isAd = true;
                         console.log("[清剿] 视频标题命中广告规则");
@@ -1018,10 +1062,18 @@
                     }
                     // 新增：擦边标题 + 空签名/短签名 组合判定
                     if (!isAd && isSexyVideoTitle(videoTitle)) {
-                        const isNoSign = !space.sign || space.sign.length < 5;
-                        if (isNoSign) {
+                        isAd = true;
+                        console.log("[清剿] 擦边视频标题 + 空签名/短签名，判定为广告号");
+                    }
+                    // 新增：低活跃 + 长期未更新视频 → 判定为广告号
+                    if (!isAd) {
+                        // 签名为空或过短，且视频发布距今超过60天
+                        const isNoSign = !space.sign || space.sign.length < 5;;
+                        // 超过60天未更新视频
+                        const isStale = daysSinceLastVideo > 60;
+                        if (isNoSign && isStale) {
                             isAd = true;
-                            console.log("[清剿] 擦边视频标题 + 空签名/短签名，判定为广告号");
+                            console.log("[清剿] 低活跃账号且超过60天未更新视频，判定为广告号");
                         }
                     }
                 }
@@ -1230,10 +1282,14 @@
         btn.addEventListener("click", async (e) => {
             e.stopPropagation();
             if (isHighLevel) {
-                const reason =
-                    rawLevel === null || rawLevel === undefined
-                        ? "该用户等级未知，可能为高等级账号或6级硬核会员。"
-                        : `该用户等级为 Lv${rawLevel}，可能为被盗的高级号。`;
+                let reason = '';
+                if (item.isVip) {
+                    reason = '该用户是大会员，暂不自动拉黑，请手动判断。';
+                } else if (rawLevel === null || rawLevel === undefined) {
+                    reason = '该用户等级未知，可能为高等级账号或6级硬核会员。';
+                } else {
+                    reason = `该用户等级为 Lv${rawLevel}，可能为被盗的高级号。`;
+                }
                 alert(
                     `⚠️ ${reason}\n已跳过自动拉黑，请手动举报（右键评论 -> 举报）。`,
                 );
@@ -1406,10 +1462,13 @@
         if (window.BayesClassifier && window.BayesClassifier.isReady()) {
             features = window.AdDetector.extractFeatures(item.text);
         }
+
         // test
-        if(item.name === "明天見呀aa") {
-            console.log("测试账号评论内容:", item.text);
+        if (item.name === '猫院长不爱薄荷') {
+            // 特例：昵称为空的账号，直接判定为广告（不进入空间检测）
+            console.log("猫院长不爱薄荷");
         }
+        
         let score = 0;
         if (isUserMarked) score = 100;
         else
@@ -1421,8 +1480,7 @@
             });
         
         const rawLevel = item.level;
-        const isHighLevel =
-            rawLevel === null || rawLevel === undefined || rawLevel >= 4;
+        const isHighLevel = (rawLevel === null || rawLevel === undefined || rawLevel >= 4) || item.isVip === true;
         const hasStrongSignal = window.AdDetector.hasStrongAdSignals
             ? window.AdDetector.hasStrongAdSignals(item.text)
             : false;
@@ -1444,7 +1502,7 @@
             (isUserMarked && isVideoOwner);
 
         if (score >= 40 || isUserMarked) {
-            // 命中强信号且不是 UP 主，或者用户手动标记且不是 UP 主：直接标记
+            // 命中强信号且不是 UP 主，或者用户手动标记且不是 UP 主：直接标记 
             if (
                 (hasStrongSignal && !isVideoOwner) ||
                 (isUserMarked && !isVideoOwner)
@@ -1452,6 +1510,19 @@
                 showCleanerButton(item, el, isHighLevel, rawLevel);
                 if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
             } else if (needProfileCheck) {
+                // ========== 新增：检查昵称是否命中广告规则 ==========
+                if (window.AdDetector) {
+                    // 使用规则引擎分析昵称，阈值设为 30（可调整）
+                    const nameScore = window.AdDetector.analyzeRule(item.name, undefined, "");
+                    if (nameScore >= 30) {
+                        console.log(`[清剿] 昵称命中广告规则 (${item.name})，直接判定为广告`);
+                        showCleanerButton(item, el, isHighLevel, rawLevel);
+                        if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
+                        return; // 直接返回，不再进行空间验证
+                    }
+                }
+                // ========== 昵称检测结束 ==========
+
                 if (el.dataset.adProfilePending === "true") return;
                 el.dataset.adProfilePending = "true";
 

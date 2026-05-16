@@ -52,6 +52,8 @@ const AdDetector = {
         { name: "截图抽奖", score: 25, regex: /(截图|保存|转发).{0,6}(抽奖|抽|中奖|送出|赠送)/i },
         { name: "私发课程资料", score: 30, regex: /(私发|私送|私聊领|私信.*?(课程|资料|文档|合集|整合|打包|合集))/i },
         { name: "无意义呼唤", score: 15, regex: /(?:我的)?(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?$|^给$/i },
+        { name: "情感暗示", score: 15, regex: /(小姑|小姨|姐姐|妹妹|寂寞|孤单|陪你|想你|等你|私聊|约|撩|骚)/i },
+        { name: "可疑外链", score: 40, regex: /https?:\/\/[^\s]*\.(top|xyz|club|tk|ml|ga|cf|click|link)\b/i }
     ],
 
     highRiskKeywords: [
@@ -60,7 +62,7 @@ const AdDetector = {
         "被动收入", "割韭菜", "无门槛", "招代理", "做任务赚钱", "推广赚钱", "宝妈在家",
         "私密照", "不雅", "SP", "约啪", "附近妹子", "解封", "黑号", "注册小号",
         "刷粉", "买粉", "真人粉", "挂机赚钱", "自动赚钱", "智能赚钱", "AI赚钱", "求给一个出处",
-        "谁看", "给看"
+        "谁看", "给看", "寂寞", "孤单", "陪你", "想你", "等你", "小姑", "小姨", "姐姐", "妹妹"
     ],
 
     userKeywords: [],
@@ -217,18 +219,23 @@ class IncrementalNaiveBayes {
 
     // 保存到 chrome.storage.local（Map 需转成普通对象）
     async _save() {
-        const toStore = {
-            hashSize: this.hashSize,
-            classCounts: this.classCounts,
-            totalDocs: this.totalDocs,
-            minSamples: this.minSamples,
-            smooth: this.smooth,
-            featureCounts: {
-                ad: Object.fromEntries(this.featureCounts.ad),
-                normal: Object.fromEntries(this.featureCounts.normal)
-            }
-        };
-        await chrome.storage.local.set({ bayes_model: toStore });
+        try {
+            const toStore = {
+                hashSize: this.hashSize,
+                classCounts: this.classCounts,
+                totalDocs: this.totalDocs,
+                minSamples: this.minSamples,
+                smooth: this.smooth,
+                featureCounts: {
+                    ad: Object.fromEntries(this.featureCounts.ad),
+                    normal: Object.fromEntries(this.featureCounts.normal)
+                }
+            };
+            await chrome.storage.local.set({ bayes_model: toStore });
+        } catch (e) {
+            // 扩展上下文失效时忽略（例如扩展被重新加载）
+            if (e.message !== 'Extension context invalidated.') console.warn("[贝叶斯] 保存模型失败", e);
+        }
     }
 
     // 从存储加载（静态方法）
