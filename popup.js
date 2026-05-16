@@ -69,6 +69,45 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    // ========== 词库编辑功能 ==========
+    const editBtn = document.getElementById("editKeywordsBtn");
+    const editorDiv = document.getElementById("keywordEditor");
+    const textarea = document.getElementById("keywordTextarea");
+    const saveBtn = document.getElementById("saveKeywordsBtn");
+    const cancelBtn = document.getElementById("cancelKeywordsBtn");
+
+    // 打开编辑器
+    editBtn.addEventListener("click", async () => {
+        editorDiv.style.display = "block";
+        editBtn.style.display = "none";
+
+        const { userKeywords = [] } = await chrome.storage.local.get("userKeywords");
+        textarea.value = (userKeywords || []).join("\n");
+    });
+
+    // 保存词库
+    saveBtn.addEventListener("click", async () => {
+        const lines = textarea.value.trim().split(/\n/);
+        const keywords = lines.map(k => k.trim()).filter(k => k.length > 0);
+        await chrome.storage.local.set({ userKeywords: keywords });
+        if (currentTabId) {
+            chrome.tabs.sendMessage(currentTabId, { action: "updateKeywords" }, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error("更新词库通知失败:", chrome.runtime.lastError);
+                }
+            });
+        }
+        alert(`词库已保存，共 ${keywords.length} 个关键词。`);
+        editorDiv.style.display = "none";
+        editBtn.style.display = "block";
+    });
+
+    // 取消编辑
+    cancelBtn.addEventListener("click", () => {
+        editorDiv.style.display = "none";
+        editBtn.style.display = "block";
+    });
+
     // 重置贝叶斯模型
     resetBtn.addEventListener("click", () => {
         if (!currentTabId) {

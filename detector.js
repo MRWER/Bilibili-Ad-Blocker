@@ -34,7 +34,6 @@ const AdDetector = {
         { name: "利益诱导+行动", score: 35, regex: /(免费|白嫖|领取|干货|资源|教程|方法|攻略|资料|福利|礼包).{0,12}(私|戳|扣|加|点|来|滴滴|dd|关注|群)/i },
         { name: "虚假紧迫感", score: 20, regex: /(名额|位置|只剩|最后|马上|快要|就要|即将|错过|再等).{0,5}(了|！|\d)/i },
         { name: "虚假见证", score: 25, regex: /(我之前|我本来|我朋友|闺蜜|舍友|同学|室友|媳妇).{0,12}(不信|结果|真的|竟然|发现|亲测|跟着|才知道)/i },
-        // { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|扣\s*扣|微\s*信|q\s*q|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
         { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|(?:扣\s*扣|q\s*q)\s*(?:群|号|\d+)|微\s*信|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
         { name: "主页/私信引流", score: 30, regex: /(主页|空间|私聊|私信|简介|动态|链接).{0,5}(有|看|见|给|发|留|找)/i },
         { name: "可疑链接参数", score: 45, regex: /[?&]share_[a-z0-9]{10,}|[^\s]{8,}\.cn\b/i },
@@ -59,7 +58,8 @@ const AdDetector = {
         "跑分", "洗钱", "套现", "提现秒到", "充值返利", "拉新奖励", "秒提", "躺赚",
         "被动收入", "割韭菜", "无门槛", "招代理", "做任务赚钱", "推广赚钱", "宝妈在家",
         "私密照", "不雅", "SP", "约啪", "附近妹子", "解封", "黑号", "注册小号",
-        "刷粉", "买粉", "真人粉"
+        "刷粉", "买粉", "真人粉", "挂机赚钱", "自动赚钱", "智能赚钱", "AI赚钱", "求给一个出处",
+        "谁看", "给看"
     ],
 
     userKeywords: [],
@@ -120,9 +120,9 @@ const AdDetector = {
             console.warn("[贝叶斯] 预测失败", e);
         }
 
-        // 融合：规则分0-100映射到0-1，与贝叶斯概率加权（规则0.7，贝叶斯0.3）
+        // 融合：规则分0-100映射到0-1，与贝叶斯概率加权（规则0.6，贝叶斯0.4）
         const ruleProb = ruleScore / 100;
-        const fusedProb = 0.7 * ruleProb + 0.3 * bayesProb;
+        const fusedProb = 0.6 * ruleProb + 0.4 * bayesProb;
         let finalScore = Math.round(fusedProb * 100);
         finalScore = Math.min(100, Math.max(0, finalScore));
         return finalScore;

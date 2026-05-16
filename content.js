@@ -108,6 +108,13 @@
         'get','go','see','now','new','say','take','want','use','find','give',
     ]);
 
+    // 擦边视频标题关键词（可扩展）
+    const SEXY_VIDEO_KEYWORDS = [
+        "扭扭臀", "放松一下", "乱跳的舞", "开心就好", "臀", "翘臀", "热舞", "性感", 
+        "瑜伽裤", "扭胯", "夹腿", "摇", "抖", "福利", "诱惑", "美女", "小姐姐",
+        "屁股", "蜜桃", "曲线", "身姿", "婀娜", "妖娆", "跳舞", "舞蹈"
+    ];
+
     /**
      * 从广告评论文本中提取高质量关键词，用于补充用户自定义词库。
      *
@@ -733,6 +740,8 @@
         const card = cardData?.card || {};
         const stat = cardData || {};
 
+        console.log(`[清剿] UID ${uid} 资料接口返回:`, infoData);
+
         return {
             sign: normalizeText(infoData.sign || ""),
             name: infoData.name,
@@ -820,12 +829,91 @@
         }
     }
 
-    // 判断文本里是否存在明显的引流词或联系方式信号。
+    // 判断文本里是否存在明显的引流词或联系方式信号（优化版）
     function hasAdKeywords(text) {
         if (!text) return false;
-        const pattern =
-            /(VX|wx|QQ|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i;
-        return pattern.test(text);
+        const t = text.toLowerCase();
+        // 原有强信号
+        if (/(vx|wx|qq|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i.test(t)) return true;
+
+        // 新增：群号模式（群：数字、群号数字、QQ群数字）
+        if (/群[：:]\s*\d{5,}/.test(t)) return true;
+        if (/qq群\s*\d+/.test(t)) return true;
+        if (/加q\s*\d+/i.test(t)) return true;
+
+        // 收费暗示
+        if (/不免费|收费\s*\d+/.test(t)) return true;
+        // 索取/给予
+        if (/要就给|求给|可以给|私给/.test(t)) return true;
+        // 情感/性暗示
+        if (/想要你陪我|超想[我家人]|谁想被踩|性感|热舞|夹腿摇|瑜伽裤|扭胯舞/.test(t)) return true;
+        // “by”格式（支持中文）
+        if (/\bby\s*[#\w\u4e00-\u9fa5]/.test(t)) return true;
+        // 其他特定短语
+        if (/想通了|说不上爱别说话|就一点喜欢|当一回好人/.test(t)) return true;
+
+        return false;
+    }
+
+    // 使用 AdDetector 规则引擎检测单个文本是否为广告（同步，不依赖贝叶斯）
+    function isAdText(text, level = undefined) {
+        if (!text) return false;
+        // 快速命中优化后的 hasAdKeywords
+        if (hasAdKeywords(text)) return true;
+        // 快速强信号命中：直接返回 true
+        if (window.AdDetector.hasStrongAdSignals && window.AdDetector.hasStrongAdSignals(text)) {
+            return true;
+        }
+        // 使用规则评分（等级参数可用于低等级加分，但空间信息没有等级，传 undefined）
+        const score = window.AdDetector.analyzeRule(text, level, "");
+        // 阈值设为 30，比评论的 40 略宽松，因为空间内容更加反映用户意图
+        return score >= 30;
+    }
+
+    // 组合检测：签名 + 视频标题 是否形成广告暗示
+    function isCombinedAd(sign, videoTitle) {
+        if (!sign || !videoTitle) return false;
+        const s = sign.toLowerCase();
+        const v = videoTitle.toLowerCase();
+
+        // 定义可疑组合规则（可根据需要扩展）
+        const rules = [
+            {
+                // 签名包含“有课”、“上课”、“学生”等时间暗示
+                signPattern: /有课|上课|学生|放学|下课|没课/,
+                // 视频标题包含“不想用”、“不想穿”、“脱掉”、“八级甲”等暗示卸下防备/装备
+                videoPattern: /不想用|不想穿|脱掉|八级甲|卸下|脱下/,
+                description: "时间暗示+卸下装备暗示"
+            },
+            {
+                // 签名包含“白天”、“晚上”、“深夜”等时间
+                signPattern: /白天|晚上|深夜|凌晨/,
+                videoPattern: /陪我|想要|等你|私聊|约/,
+                description: "时间+约会暗示"
+            }
+            // 可继续添加其他规则
+        ];
+
+        for (const rule of rules) {
+            if (rule.signPattern.test(s) && rule.videoPattern.test(v)) {
+                console.log(`[清剿] 组合检测命中: ${rule.description}`);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 检测视频标题是否属于擦边内容
+    function isSexyVideoTitle(title) {
+        if (!title) return false;
+        const t = title.toLowerCase();
+        // 精确匹配关键词
+        for (const kw of SEXY_VIDEO_KEYWORDS) {
+            if (t.includes(kw.toLowerCase())) return true;
+        }
+        // 模式匹配：动词+身体部位（如扭腰、抖臀）
+        if (/(扭|摇|抖|晃|摆|撅).{0,2}(臀|腰|胯|腿|屁股)/.test(t)) return true;
+        return false;
     }
 
     // 结合空间签名、动态、评论和投稿信息判断账号是否疑似广告号。
@@ -859,19 +947,20 @@
 
                 details.sign = space.sign;
                 console.log(`[清剿] UID ${uid} 签名:`, space.sign);
-                if (hasAdKeywords(space.sign)) {
+                // 使用增强检测
+                if (!isAd && isAdText(space.sign)) {
                     isAd = true;
-                    console.log("[清剿] 签名命中引流词");
+                console.log("[清剿] 签名命中广告规则");
                 }
 
-                // ✅ 关键优化：如果已经判定为广告，直接返回，不再请求动态和视频
+                // 如果已经判定为广告，直接返回
                 if (isAd) {
                     const result = { isAd, details };
                     profileCache.set(uid, { result, time: Date.now() });
                     return result;
                 }
 
-                // 2. 获取最新动态（仅在空间信息未判定广告时执行）
+                // 2. 获取最新动态
                 const dynamic = await fetchLatestDynamic(uid);
                 const isAllForward =
                     dynamic &&
@@ -890,17 +979,18 @@
                 if (dynamic) {
                     details.dynamic = dynamic.text;
                     console.log(`[清剿] UID ${uid} 最新动态:`, dynamic.text);
-                    if (!isAd && hasAdKeywords(dynamic.text)) {
+                if (!isAd && isAdText(dynamic.text)) {
                         isAd = true;
-                        console.log("[清剿] 动态命中引流词");
+                    console.log("[清剿] 动态命中广告规则");
                     }
                     if (!isAd) {
                         const comments = await fetchDynamicComments(dynamic.id);
                         details.dynamicComments = comments;
                         console.log(`[清剿] UID ${uid} 动态评论:`, comments);
-                        if (comments.some((c) => hasAdKeywords(c))) {
+                    // 对每条动态评论也使用增强检测
+                    if (comments.some(c => isAdText(c))) {
                             isAd = true;
-                            console.log("[清剿] 动态评论区命中引流词");
+                            console.log("[清剿] 动态评论区命中广告规则");
                         }
                     }
                 }
@@ -917,9 +1007,22 @@
                 if (videoTitle) {
                     details.video = videoTitle;
                     console.log(`[清剿] UID ${uid} 最新视频:`, videoTitle);
-                    if (!isAd && hasAdKeywords(videoTitle)) {
+                    if (!isAd && isAdText(videoTitle)) {
                         isAd = true;
-                        console.log("[清剿] 视频标题命中引流词");
+                        console.log("[清剿] 视频标题命中广告规则");
+                    }
+                    // 新增：组合检测（签名 + 视频标题）
+                    if (!isAd && isCombinedAd(space.sign, videoTitle)) {
+                        isAd = true;
+                        console.log("[清剿] 签名+视频标题组合命中广告规则");
+                    }
+                    // 新增：擦边标题 + 空签名/短签名 组合判定
+                    if (!isAd && isSexyVideoTitle(videoTitle)) {
+                        const isNoSign = !space.sign || space.sign.length < 5;
+                        if (isNoSign) {
+                            isAd = true;
+                            console.log("[清剿] 擦边视频标题 + 空签名/短签名，判定为广告号");
+                        }
                     }
                 }
 
@@ -1020,7 +1123,7 @@
         btn.style.cssText =
             "display:inline-flex; align-items:center; justify-content:center; margin-left:4px; color:#fff; background:#6c757d; border-radius:4px; width:16px; height:16px; font-size:11px; line-height:1; cursor:pointer; user-select:none; z-index:999; opacity:0.8; padding:0;";
         btn.textContent = "📌";
-        btn.title = "标记为广告，并将关键词加入永久词库";
+        btn.title = "标记为广告，并将关键词加入永久词库和贝叶斯样本中，提升自动识别能力";
         btn.addEventListener("click", async (e) => {
             e.stopPropagation();
             const learnBtn = e.currentTarget;
@@ -1064,18 +1167,19 @@
                 return;
             }
             // 判断贝叶斯是否已就绪
-            const bayesReady =
-                window.BayesClassifier && window.BayesClassifier.isReady();
-            if (!bayesReady) {
-                // 贝叶斯样本不足，仍然使用词库学习
-                await updateUserKeywords(newWords);
-            } else {
-                console.log("[贝叶斯] 样本已充足，不再更新词库");
-            }
+            // const bayesReady =
+            //     window.BayesClassifier && window.BayesClassifier.isReady();
+            // if (!bayesReady) {
+            //     // 贝叶斯样本不足，仍然使用词库学习
+            //     await updateUserKeywords(newWords);
+            // } else {
+            //     console.log("[贝叶斯] 样本已充足，直接使用贝叶斯学习新样本");
+            // }
+            await updateUserKeywords(newWords);
             if (window.BayesClassifier) {
                 const features = window.AdDetector.extractFeatures(sourceText);
                 window.BayesClassifier.update(features, "ad");
-                console.log("[贝叶斯] 学习正样本（广告）");
+                // console.log("[贝叶斯] 学习正样本（广告）");
             }
             el.dataset.adUserMarked = "true";
             learnBtn.remove();
@@ -1702,7 +1806,7 @@
     async function waitForHost() {
         await initUserKeywords();
         await initBayesClassifier();
-        await maybeClearUserKeywords(); // 新增：贝叶斯样本充足时清空词库
+        // await maybeClearUserKeywords(); // 新增：贝叶斯样本充足时清空词库
         if (getCommentsHost()) {
             startObservingShadow();
             return;

@@ -139,6 +139,12 @@
       border-top: 1px solid rgba(255,255,255,0.08);
       padding-top: 12px;
     }
+    .flex-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -192,6 +198,23 @@
       勾选后，低等级广告账号（Lv≤3）将自动加入队列并每秒拉黑一个。高等级账号仅会提示，不会自动拉黑。
     </p>
   </div>
+  
+  <!-- 自定义词库管理（恢复） -->
+  <div class="auto-box">
+    <div class="section-title">📝 自定义词库</div>
+    <p style="font-size:12px; color:#bfc7d5; margin:0 0 8px;">
+      通过页面上的 <code>📌 标记</code> 按钮可学习新词，也可在此手动编辑。
+    </p>
+    <button id="editKeywordsBtn" class="small-btn secondary">编辑词库</button>
+    <div id="keywordEditor" style="display:none;">
+      <textarea id="keywordTextarea" rows="5" placeholder="一行一个关键词"></textarea>
+      <div class="flex-row">
+        <button id="saveKeywordsBtn" class="small-btn">保存</button>
+        <button id="cancelKeywordsBtn" class="small-btn secondary">取消</button>
+      </div>
+      <p style="font-size:11px; color:#888; margin-top:6px;">修改后保存立即生效，页面会自动刷新识别规则。</p>
+    </div>
+  </div>
 
   <div class="auto-box">
     <div class="section-title">🧹 模型管理</div>
@@ -202,7 +225,7 @@
   </div>
 
   <div class="footer">
-    v1.1.3 | 贝叶斯学习版 | 模型完全本地运行
+    v1.1.4 | 贝叶斯学习版 | 模型完全本地运行
   </div>
 
   <script src="popup.js"></script>
