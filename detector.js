@@ -51,6 +51,7 @@ const AdDetector = {
         { name: "代理招募", score: 40, regex: /(招(代理|合伙人|推广员)|兼职.*代理|代理.*招募|做代理|成为代理)/i },
         { name: "截图抽奖", score: 25, regex: /(截图|保存|转发).{0,6}(抽奖|抽|中奖|送出|赠送)/i },
         { name: "私发课程资料", score: 30, regex: /(私发|私送|私聊领|私信.*?(课程|资料|文档|合集|整合|打包|合集))/i },
+        { name: "无意义呼唤", score: 15, regex: /(?:我的)?(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?$|^给$/i },
     ],
 
     highRiskKeywords: [
@@ -70,7 +71,7 @@ const AdDetector = {
 
     hasStrongAdSignals(text) {
         const t = this._normalize(text);
-        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接)/i.test(t);
+        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|(?:我的)?(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?\s*$|^给\s*$)/i.test(t);
     },
 
     // 规则评分 (0-100)

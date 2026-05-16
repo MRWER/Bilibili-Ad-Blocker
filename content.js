@@ -1406,6 +1406,10 @@
         if (window.BayesClassifier && window.BayesClassifier.isReady()) {
             features = window.AdDetector.extractFeatures(item.text);
         }
+        // test
+        if(item.name === "明天見呀aa") {
+            console.log("测试账号评论内容:", item.text);
+        }
         let score = 0;
         if (isUserMarked) score = 100;
         else
@@ -1415,7 +1419,7 @@
                 avatarUrl: "",
                 features: features,
             });
-
+        
         const rawLevel = item.level;
         const isHighLevel =
             rawLevel === null || rawLevel === undefined || rawLevel >= 4;
@@ -1432,11 +1436,11 @@
 
         // 三种情况需要二次确认（空间检测）：
         //   1. 命中 hasStrongSignal 且是视频 UP 主（置顶带链接是正常行为）
-        //   2. 未命中 hasStrongSignal 且分数 >= 40（原有逻辑）
+        //   2. 未命中 hasStrongSignal 且分数 >= 40 的低级号（原有逻辑）
         //   3. 用户手动标记且是 UP 主（额外保险）
         const needProfileCheck =
             (hasStrongSignal && isVideoOwner) ||
-            (!hasStrongSignal && !isUserMarked && score >= 40) ||
+            (!hasStrongSignal && !isHighLevel && !isUserMarked && score >= 40) ||
             (isUserMarked && isVideoOwner);
 
         if (score >= 40 || isUserMarked) {
