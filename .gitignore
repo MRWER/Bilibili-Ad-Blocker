@@ -12,7 +12,8 @@ web-ext-artifacts/
 # 临时文件        
 *.bak 
 # 测试文件
-*test.js                    
+*test.js
+*test_words.txt                    
 
 # ================= 通用开发/系统文件 =================
 node_modules/

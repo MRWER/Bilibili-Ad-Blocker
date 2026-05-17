@@ -359,11 +359,6 @@
             nameLink?.innerText || nameLink?.textContent || "未命名",
         );
 
-        // test
-        if (name === "卡Q思") {
-            console.log("[清剿] 测试用户评论文本：", text);
-        }
-
         // 提取等级（完全依赖 DOM 图标解析，已包含硬核会员识别）
         const level = extractLevelFromRenderer(renderer);
 
@@ -880,7 +875,7 @@
         // 索取/给予
         if (/要就给|求给|可以给|私给/.test(t)) return true;
         // 情感/性暗示
-        if (/想要你陪我|超想[我家人]|谁想被踩|性感|热舞|夹腿摇|瑜伽裤|扭胯舞/.test(t)) return true;
+        if (/想要你陪我|超想[我家人]|谁想被踩|性感|夹腿摇|瑜伽裤|扭胯舞/.test(t)) return true;
         // “by”格式（支持中文）
         if (/\bby\s*[#\w\u4e00-\u9fa5]/.test(t)) return true;
         // 其他特定短语
@@ -1060,15 +1055,16 @@
                         isAd = true;
                         console.log("[清剿] 签名+视频标题组合命中广告规则");
                     }
+                    const isNoSign = !space.sign || space.sign.length < 5;;
                     // 新增：擦边标题 + 空签名/短签名 组合判定
-                    if (!isAd && isSexyVideoTitle(videoTitle)) {
+                    if (!isAd && isSexyVideoTitle(videoTitle) && isNoSign) {
                         isAd = true;
                         console.log("[清剿] 擦边视频标题 + 空签名/短签名，判定为广告号");
                     }
                     // 新增：低活跃 + 长期未更新视频 → 判定为广告号
                     if (!isAd) {
                         // 签名为空或过短，且视频发布距今超过60天
-                        const isNoSign = !space.sign || space.sign.length < 5;;
+                        
                         // 超过60天未更新视频
                         const isStale = daysSinceLastVideo > 60;
                         if (isNoSign && isStale) {
@@ -1462,12 +1458,6 @@
         if (window.BayesClassifier && window.BayesClassifier.isReady()) {
             features = window.AdDetector.extractFeatures(item.text);
         }
-
-        // test
-        if (item.name === '猫院长不爱薄荷') {
-            // 特例：昵称为空的账号，直接判定为广告（不进入空间检测）
-            console.log("猫院长不爱薄荷");
-        }
         
         let score = 0;
         if (isUserMarked) score = 100;
@@ -1507,6 +1497,7 @@
                 (hasStrongSignal && !isVideoOwner) ||
                 (isUserMarked && !isVideoOwner)
             ) {
+                console.log(`[清剿] 用户'${item.name}'评论命中强信号${hasStrongSignal ? "(强信号)" : ""}${isUserMarked ? "(用户标记)" : ""}，直接判定为广告`);
                 showCleanerButton(item, el, isHighLevel, rawLevel);
                 if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
             } else if (needProfileCheck) {

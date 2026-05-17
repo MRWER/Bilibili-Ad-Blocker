@@ -73,7 +73,8 @@ const AdDetector = {
 
     hasStrongAdSignals(text) {
         const t = this._normalize(text);
-        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|(?:我的)?(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?\s*$|^给\s*$)/i.test(t);
+        // 原有强信号 + 疑问式亲属呼唤
+        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|我的(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?\s*$|^给\s*$)/i.test(t);
     },
 
     // 规则评分 (0-100)
