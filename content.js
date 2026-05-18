@@ -1,7 +1,8 @@
 // content.js – 空间二次验证完整版（修正 WBI + 修复回退逻辑）
 (function () {
     "use strict";
-    console.log("[清剿] content.js 已注入 (空间验证修正版)");
+    const manifest = chrome.runtime.getManifest();
+    console.log(`[清剿] v${manifest.version} content.js 已注入 (空间验证修正版)`);
 
     const COMMENT_SHADOW_HOST_SELECTOR = [
         "bili-comment-thread-renderer",
@@ -15,6 +16,7 @@
 
     const observedShadowRoots = new WeakSet();
     let scanTimer = null;
+    let bodyObserver = null;
 
     let autoCleanActive = false;
     let autoCleanQueue = [];
@@ -22,11 +24,12 @@
     let autoCleanPanel = null;
     let autoCleanListEl = null;
     let autoCleanCurrentEl = null;
+    let isProcessing = false;
 
     const profileCache = new Map();
     const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
     const pendingProfileChecks = new Map(); // uid -> Promise
-
+    
     // ========== 工具函数 ==========
     // 安全获取元素的开放式 Shadow Root，避免访问异常打断流程。
     function getOpenShadow(el) {
@@ -114,7 +117,8 @@
         "瑜伽裤", "扭胯", "夹腿", "摇", "抖", "福利", "诱惑", "美女", "小姐姐",
         "屁股", "蜜桃", "曲线", "身姿", "婀娜", "妖娆", "跳舞", "舞蹈","打给我", 
         "进来了吗", "可以吗", "是你喜欢的类型", "就一次", "今晚一起", "喜欢吗", 
-        "喜欢就点", "喜欢就赞", "喜欢就关注","今晚", "一次", "喜欢", "类型", 
+        "喜欢就点", "喜欢就赞", "喜欢就关注","今晚", "一次", "喜欢", "类型",
+        "少萝", "萝莉", "JK", "小女仆", "女仆", "福利姬", "黑丝", "白丝", "腿控", "足控"
     ];
 
     /**
@@ -136,97 +140,82 @@
     function extractKeywords(text) {
         if (!text) return [];
 
-        // ── 阶段 1：预归一化 ────────────────────────────────────────────────────
+        // 阶段 1：预归一化（与原逻辑相同）
         let norm = normalizeText(text)
-            .replace(/[Ａ-Ｚ]/g, (c) =>
-                String.fromCharCode(c.charCodeAt(0) - 65248 + 65),
-            )
-            .replace(/[ａ-ｚ]/g, (c) =>
-                String.fromCharCode(c.charCodeAt(0) - 65248 + 97),
-            )
-            .replace(/[０-９]/g, (c) =>
-                String.fromCharCode(c.charCodeAt(0) - 65248 + 48),
-            )
-            .replace(/[\u200b-\u200f\u2060\ufeff\u00ad]/g, "")
-            .replace(/微\s+信/g, "微信")
-            .replace(/[Qq]\s+[Qq]/g, "QQ")
-            .replace(/扣\s*扣/g, "QQ")
-            .replace(/[vVwW][xX]/g, "微信")
+            .replace(/[Ａ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 65))
+            .replace(/[ａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 97))
+            .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 48))
+            .replace(/[\u200b-\u200f\u2060\ufeff\u00ad]/g, '')
+            .replace(/微\s+信/g, '微信')
+            .replace(/[Qq]\s+[Qq]/g, 'QQ')
+            .replace(/扣\s*扣/g, 'QQ')
+            .replace(/[vVwW][xX]/g, '微信')
             .trim();
 
         const result = new Set();
 
-        // ── 阶段 2：广告语义短语提取（优先级最高）──────────────────────────────
+        // 阶段 2：广告语义短语提取（优先级最高）
         for (const pattern of _KW_SEMANTIC_PATTERNS) {
-            // 注意：同一个 global regex 需重置 lastIndex 或每次 clone；这里用 source 重建避免状态问题
             const re = new RegExp(pattern.source, pattern.flags);
             let m;
             while ((m = re.exec(norm)) !== null) {
-                const phrase = m[0].replace(/\s/g, "").trim();
+                const phrase = m[0].replace(/\s/g, '').trim();
                 if (phrase.length >= 2) result.add(phrase);
             }
         }
 
-        // ── 阶段 3：信号字周边中文 bigram（定向提取，非全量）───────────────────
-        const chineseOnly = norm.replace(/[^\u4e00-\u9fa5]/g, "");
-        // 先剔除停用单字，净化 bigram 原料
-        const cleanCN = chineseOnly
-            .split("")
-            .filter((c) => !_KW_CN_STOP_CHARS.has(c))
-            .join("");
+        // 阶段 3：信号字周边中文 bigram（定向提取，非全量）
+        const chineseOnly = norm.replace(/[^\u4e00-\u9fa5]/g, '');
+        const cleanCN = chineseOnly.split('').filter(c => !_KW_CN_STOP_CHARS.has(c)).join('');
 
         for (let i = 0; i < cleanCN.length; i++) {
             if (!_KW_CN_SIGNAL_CHARS.has(cleanCN[i])) continue;
-            // 提取以信号字为中心的 2-gram 和 3-gram（左移一位 + 当前位）
             for (const start of [i - 1, i]) {
                 if (start < 0) continue;
                 for (const len of [2, 3]) {
                     if (start + len > cleanCN.length) continue;
                     const chunk = cleanCN.substring(start, start + len);
-                    if (!_KW_CN_STOP_WORDS.has(chunk)) result.add(chunk);
+                    if (!_KW_CN_STOP_WORDS.has(chunk) && chunk.length >= 2) {
+                        result.add(chunk);
+                    }
                 }
             }
         }
 
-        // 若语义短语和信号字 bigram 均无结果，对全文做纯 bigram 兜底
-        // （仅对长度 ≤ 30 的短评生效，避免长文本产生大量噪声词）
-        if (result.size === 0 && cleanCN.length <= 30) {
-            for (let i = 0; i < cleanCN.length - 1; i++) {
-                const bigram = cleanCN.substring(i, i + 2);
-                if (!_KW_CN_STOP_WORDS.has(bigram)) result.add(bigram);
+        // 阶段 4：英文词提取（仅保留疑似广告特征）
+        const normNoUrl = norm.replace(/https?:\/\/\S+/g, ' ');
+        const englishWords = normNoUrl.match(/[a-zA-Z]{4,}/g) || []; // 长度至少4，避免短词
+        for (const w of [...new Set(englishWords)]) {
+            const lw = w.toLowerCase();
+            // 保留可能为广告的英文词：包含数字、或长度很短且不是停用词（如 vx, qq 已在前面处理）
+            if (/\d/.test(lw)) {
+                result.add(lw);
+            } else if (lw.length <= 6 && !_KW_EN_STOP_WORDS.has(lw)) {
+                result.add(lw);
             }
         }
 
-        // ── 阶段 4a：英文词提取 ─────────────────────────────────────────────────
-        // 先剥离 URL，防止域名/参数污染词库
-        const normNoUrl = norm.replace(/https?:\/\/\S+/g, " ");
-        const englishWords = normNoUrl.match(/[a-zA-Z]{3,}/g) || [];
-        for (const w of [...new Set(englishWords)]) {
-            const lw = w.toLowerCase();
-            if (!_KW_EN_STOP_WORDS.has(lw)) result.add(lw);
-        }
-
-        // ── 阶段 5：后处理 ──────────────────────────────────────────────────────
-        let words = [...result].filter(
-            (kw) =>
-                kw.length >= 2 && // 最短两字
-                !/^\d{1,3}$/.test(kw) && // 纯短数字无意义
-                !/^(.)\1+$/.test(kw), // 重复单字无意义（如"哈哈哈"→"哈哈"）
+        // 阶段 5：后处理
+        let words = [...result].filter(kw =>
+            kw.length >= 2 &&
+            !/^\d{1,3}$/.test(kw) &&
+            !/^(.)\1+$/.test(kw) &&
+            !/^(可以|什么|怎么|为什么|觉得|还是|但是|因为|所以|如果|不过|只是|然后|已经|比较|非常|真的|这个|那个|一些|一个|自己|他们|我们|你们|没有|知道|出来|起来|过来|进去|就是|也是|不是|还有|的话|而已|而且|并且|一直|一样|感觉|现在|之后|之前|其实|不会|不要|一下|没啥|有点|有些|有没|好像|应该|只有|虽然|即使)$/i.test(kw)
         );
 
-        // 子串去冗余：若较短词已被较长词完整包含，则舍弃较短词
-        // 例：有"加微信群"时，"微信"和"加微"作为冗余词被移除
+        // 子串去冗余
         words.sort((a, b) => b.length - a.length);
         const deduped = [];
         for (const kw of words) {
-            if (!deduped.some((longer) => longer.includes(kw))) {
+            if (!deduped.some(longer => longer.includes(kw))) {
                 deduped.push(kw);
             }
         }
 
-        // 最多返回 20 个关键词，防止少数超长评论污染词库
-        const final = deduped.slice(0, 20);
+        // 最多返回 15 个关键词（原 20 降低）
+        const final = deduped.slice(0, 15);
 
+        // 如果没有任何广告特征（无语义短语、无信号词周边词），则不学习任何词
         if (final.length === 0 && norm.length < 20) return [norm];
         return final;
     }
@@ -303,7 +292,17 @@
         if (!richHost) return "";
         const sr = getOpenShadow(richHost);
         const el = q(sr, "#contents") || q(sr, "p#contents") || richHost;
-        return normalizeText(el?.innerText || el?.textContent || "");
+        // 先尝试获取 innerText / textContent（普通文本）
+        let text = el.innerText || el.textContent || "";
+        // 如果为空（纯表情评论），则从 img 的 alt 属性中提取表情代码
+        if (!text && el.innerHTML) {
+            const imgRegex = /<img[^>]+alt="([^"]+)"/gi;
+            let match;
+            while ((match = imgRegex.exec(el.innerHTML)) !== null) {
+                text += match[1];
+            }
+        }
+        return normalizeText(text);
     }
 
     // 统一把不同类型的评论节点解析为实际评论渲染节点。
@@ -488,6 +487,7 @@
             a = addUnsigned(a, addUnsigned(addUnsigned(I(b, c, d), x), ac));
             return addUnsigned(rotateLeft(a, s), b);
         }
+        // 将字符串转换为 MD5 计算所需的字数组格式，包含必要的填充和长度编码。
         function convertToWordArray(string) {
             let lMessageLength = string.length;
             let lNumberOfWords_temp1 = lMessageLength + 8;
@@ -497,19 +497,19 @@
             let lWordArray = Array(lNumberOfWords - 1);
             let lBytePosition = 0,
                 lByteCount = 0;
-            let lWordCount = 0; // 声明提到 while 外部，保证后面可访问
             while (lByteCount < lMessageLength) {
-                lWordCount = (lByteCount - (lByteCount % 4)) / 4; // 修正点：声明变量并正确拼写为 lWordCount
+                let lWordCount = (lByteCount - (lByteCount % 4)) / 4;   // 修复：在循环内声明
                 lBytePosition = (lByteCount % 4) * 8;
                 lWordArray[lWordCount] =
                     lWordArray[lWordCount] |
                     (string.charCodeAt(lByteCount) << lBytePosition);
                 lByteCount++;
             }
-            lWordCount = (lByteCount - (lByteCount % 4)) / 4; // 此处 lWordCount 已在上一行声明，可复用
+            // 补全结尾处理
+            let lastWord = (lByteCount - (lByteCount % 4)) / 4;
             lBytePosition = (lByteCount % 4) * 8;
-            lWordArray[lWordCount] =
-                lWordArray[lWordCount] | (0x80 << lBytePosition);
+            lWordArray[lastWord] =
+                lWordArray[lastWord] | (0x80 << lBytePosition);
             lWordArray[lNumberOfWords - 2] = lMessageLength << 3;
             lWordArray[lNumberOfWords - 1] = lMessageLength >>> 29;
             return lWordArray;
@@ -722,7 +722,7 @@
                         // 生成 1~4 秒的随机退避时间，防止压制
                         const backoff = 1000 + Math.floor(Math.random() * 3000);
                         console.log(
-                            `[清剿] 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`,
+                            `[清剿] 请求(${task.url}) 频率限制(${json.code})，等待 ${(backoff / 1000).toFixed(1)} 秒后重试`,
                         );
                         fetchQueue.unshift(task);
                         setTimeout(() => processFetchQueue(), backoff);
@@ -747,28 +747,29 @@
     // ========== 空间信息获取 ==========
     // 获取用户空间基础资料和活跃度统计信息。
     async function fetchSpaceInfo(uid) {
-        // 并行请求两个接口，优化加载速度
-        const [infoData, cardData] = await Promise.all([
-            requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`),
-            requestJson(
-                `https://api.bilibili.com/x/web-interface/card?mid=${uid}`,
-            ),
-        ]);
-
-        // cardData 包含 fans, attention, archive_count (视频数), like_num (获赞数)
+        // 先请求 card 接口（不经过队列，或使用 bypassQueue）
+        const cardData = await requestJson(`https://api.bilibili.com/x/web-interface/card?mid=${uid}`);
         const card = cardData?.card || {};
-        const stat = cardData || {};
-
-        console.log(`[清剿] UID ${uid} 资料接口返回:`, infoData);
-
+        const fans = card.fans || 0;
+        const likes = card.like_num || 0;
+        const videos = card.archive_count || 0;
+        
+        // 低活跃判定阈值
+        if (fans < 6 && likes < 6 && videos < 6) {
+            return {
+                isLowActivity: true,
+                sign: "",
+                name: card.name || "",
+                fans, likes, videos
+            };
+        }
+        // 非低活跃，再请求 info 获取签名
+        const infoData = await requestJson(`https://api.bilibili.com/x/space/acc/info?mid=${uid}`);
         return {
+            isLowActivity: false,
             sign: normalizeText(infoData.sign || ""),
             name: infoData.name,
-            // 🆕 从新接口更新用户统计数据
-            following: card?.attention || 0, // 关注数
-            fans: card?.fans || 0, // 粉丝数
-            videos: stat?.archive_count || 0, // 视频/专栏投稿总数 (替代播放数)
-            likes: stat?.like_num || 0, // 获赞数
+            fans, likes, videos
         };
     }
 
@@ -828,13 +829,13 @@
     }
 
     // 获取用户最近一次投稿的视频标题。
-    async function fetchLatestVideo(uid) {
+    async function fetchLatestVideos(uid, limit = 5) {
         try {
             await fetchWbiKeys();
             const wts = Math.floor(Date.now() / 1000);
             const params = new URLSearchParams();
             params.set("mid", uid);
-            params.set("ps", "1");
+            params.set("ps", limit);
             params.set("tid", "0");
             params.set("pn", "1");
             params.set("keyword", "");
@@ -847,11 +848,10 @@
             const data = await requestJson(url);
             const vlist = data.list?.vlist || [];
             if (vlist.length === 0) return null;
-            const latest = vlist[0];
-            return {
-                title: normalizeText(latest.title || ""),
-                created: latest.created   // 秒级时间戳
-            };
+            return vlist.map(v => ({
+                title: normalizeText(v.title || ""),
+                created: v.created
+            }));
         } catch (e) {
             console.warn("[清剿] 获取视频投稿失败", e);
             return null;
@@ -859,38 +859,38 @@
     }
 
     // 判断文本里是否存在明显的引流词或联系方式信号（优化版）
-    function hasAdKeywords(text) {
-        if (!text) return false;
-        const t = text.toLowerCase();
-        // 原有强信号
-        if (/(vx|wx|qq|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i.test(t)) return true;
+    // function hasAdKeywords(text) {
+    //     if (!text) return false;
+    //     const t = text.toLowerCase();
+    //     // 原有强信号
+    //     if (/(vx|wx|qq|加群|扫码|进群|←戳|→戳|b23\.tv|https?:\/\/)/i.test(t)) return true;
 
-        // 新增：群号模式（群：数字、群号数字、QQ群数字）
-        if (/群[：:]\s*\d{5,}/.test(t)) return true;
-        if (/qq群\s*\d+/.test(t)) return true;
-        if (/加q\s*\d+/i.test(t)) return true;
+    //     // 新增：群号模式（群：数字、群号数字、QQ群数字）
+    //     if (/群[：:]\s*\d{5,}/.test(t)) return true;
+    //     if (/qq群\s*\d+/.test(t)) return true;
+    //     if (/加q\s*\d+/i.test(t)) return true;
 
-        // 收费暗示
-        if (/不免费|收费\s*\d+/.test(t)) return true;
-        // 索取/给予
-        if (/要就给|求给|可以给|私给/.test(t)) return true;
-        // 情感/性暗示
-        if (/想要你陪我|超想[我家人]|谁想被踩|性感|夹腿摇|瑜伽裤|扭胯舞/.test(t)) return true;
-        // “by”格式（支持中文）
-        if (/\bby\s*[#\w\u4e00-\u9fa5]/.test(t)) return true;
-        // 其他特定短语
-        if (/想通了|说不上爱别说话|就一点喜欢|当一回好人/.test(t)) return true;
-        // 纯数字串（6-10位），且不是常见年份
-        if (/\b\d{6,10}\b/.test(t) && !/\b(19|20)\d{2}\b/.test(t)) return true;
+    //     // 收费暗示
+    //     if (/不免费|收费\s*\d+/.test(t)) return true;
+    //     // 索取/给予
+    //     if (/要就给|求给|可以给|私给/.test(t)) return true;
+    //     // 情感/性暗示
+    //     if (/想要你陪我|超想[我家人]|谁想被踩|性感|夹腿摇|瑜伽裤|扭胯舞/.test(t)) return true;
+    //     // “by”格式（支持中文）
+    //     if (/\bby\s*[#\w\u4e00-\u9fa5]/.test(t)) return true;
+    //     // 其他特定短语
+    //     if (/想通了|说不上爱别说话|就一点喜欢|当一回好人/.test(t)) return true;
+    //     // 纯数字串（6-10位），且不是常见年份
+    //     if (/\b\d{6,10}\b/.test(t) && !/\b(19|20)\d{2}\b/.test(t)) return true;
 
-        return false;
-    }
+    //     return false;
+    // }
 
     // 使用 AdDetector 规则引擎检测单个文本是否为广告（同步，不依赖贝叶斯）
     function isAdText(text, level = undefined) {
         if (!text) return false;
         // 快速命中优化后的 hasAdKeywords
-        if (hasAdKeywords(text)) return true;
+        // if (hasAdKeywords(text)) return true;
         // 快速强信号命中：直接返回 true
         if (window.AdDetector.hasStrongAdSignals && window.AdDetector.hasStrongAdSignals(text)) {
             return true;
@@ -962,32 +962,31 @@
                 sign: null,
                 dynamic: null,
                 dynamicComments: [],
-                video: null,
+                videos: [],        // 存储所有视频标题
                 empty: false,
             };
             let isAd = false;
             try {
-                // 1. 获取空间基本信息（两个接口并行，但受队列控制，仍为两个请求）
+                // 1. 获取空间基本信息（低活跃短接）
                 const space = await fetchSpaceInfo(uid);
                 console.log(`[清剿] UID ${uid} 空间信息:`, space);
 
                 // 检查低活跃画像（三无账号）
-                const isLowActivity =
-                    space.fans < 10 && space.likes < 10 && space.videos < 10;
-                if (isLowActivity) {
+                if (space.isLowActivity) {
                     isAd = true;
                     console.log("[清剿] 命中异常纯净画像识别规则（低活跃）");
+                    const result = { isAd, details: { lowActivity: true } };
+                    profileCache.set(uid, { result, time: Date.now() });
+                    return result;
                 }
 
                 details.sign = space.sign;
                 console.log(`[清剿] UID ${uid} 签名:`, space.sign);
-                // 使用增强检测
                 if (!isAd && isAdText(space.sign)) {
                     isAd = true;
-                console.log("[清剿] 签名命中广告规则");
+                    console.log("[清剿] 签名命中广告规则");
                 }
 
-                // 如果已经判定为广告，直接返回
                 if (isAd) {
                     const result = { isAd, details };
                     profileCache.set(uid, { result, time: Date.now() });
@@ -996,18 +995,13 @@
 
                 // 2. 获取最新动态
                 const dynamic = await fetchLatestDynamic(uid);
-                const isAllForward =
-                    dynamic &&
+                const isAllForward = dynamic &&
                     dynamic.totalCount <= 2 &&
                     dynamic.types.length > 0 &&
-                    dynamic.types.every(
-                        (type) => type === "DYNAMIC_TYPE_FORWARD",
-                    );
+                    dynamic.types.every(type => type === "DYNAMIC_TYPE_FORWARD");
                 if (isAllForward) {
                     isAd = true;
-                    console.log(
-                        "[清剿] 命中异常纯净画像识别规则（纯转发动态）",
-                    );
+                    console.log("[清剿] 命中异常纯净画像识别规则（纯转发动态）");
                 }
 
                 if (dynamic) {
@@ -1018,54 +1012,64 @@
                         console.log("[清剿] 动态命中广告规则");
                     }
                     if (!isAd) {
-                        const comments = await fetchDynamicComments(dynamic.commentOid, dynamic.commentType);
-                        details.dynamicComments = comments;
-                        console.log(`[清剿] UID ${uid} 动态评论:`, comments);
-                    // 对每条动态评论也使用增强检测
-                    if (comments.some(c => isAdText(c))) {
-                            isAd = true;
-                            console.log("[清剿] 动态评论区命中广告规则");
+                        const needComments = (dynamic.text.length < 20 && !space.sign);
+                        if (needComments) {
+                            const comments = await fetchDynamicComments(dynamic.commentOid, dynamic.commentType);
+                            details.dynamicComments = comments;
+                            console.log(`[清剿] UID ${uid} 动态评论:`, comments);
+                            if (comments.some(c => isAdText(c))) {
+                                isAd = true;
+                                console.log("[清剿] 动态评论区命中广告规则");
+                            }
                         }
                     }
                 }
 
-                // ✅ 再次检查是否已判定为广告，若是则跳过视频请求
                 if (isAd) {
                     const result = { isAd, details };
                     profileCache.set(uid, { result, time: Date.now() });
                     return result;
                 }
 
-                // 3. 获取最新视频标题（仅在之前未判定广告时执行）
-                const videoInfo = await fetchLatestVideo(uid);
-                const videoTitle = videoInfo?.title;
-                if (videoInfo) {
-                    details.video = videoTitle;
+                // 3. 获取最近多条视频标题（默认5条）
+                const videoInfos = await fetchLatestVideos(uid, 5);
+                if (videoInfos && videoInfos.length > 0) {
+                    details.videos = videoInfos.map(v => v.title);
+                    const latestVideo = videoInfos[0];
+                    const videoTitle = latestVideo.title;
                     const now = Math.floor(Date.now() / 1000);
-                    const daysSinceLastVideo = (now - videoInfo.created) / 86400;
-                    console.log(`[清剿] UID ${uid} 最新视频:`, videoInfo.title, `发布于 ${Math.floor(daysSinceLastVideo)} 天前`);
+                    const daysSinceLastVideo = (now - latestVideo.created) / 86400;
+                    console.log(`[清剿] UID ${uid} 最新视频:`, videoTitle, `发布于 ${Math.floor(daysSinceLastVideo)} 天前`);
 
                     // 标题广告检测
                     if (!isAd && isAdText(videoTitle)) {
                         isAd = true;
                         console.log("[清剿] 视频标题命中广告规则");
                     }
-                    // 新增：组合检测（签名 + 视频标题）
+                    // 组合检测（签名 + 视频标题）
                     if (!isAd && isCombinedAd(space.sign, videoTitle)) {
                         isAd = true;
                         console.log("[清剿] 签名+视频标题组合命中广告规则");
                     }
-                    const isNoSign = !space.sign || space.sign.length < 5;;
-                    // 新增：擦边标题 + 空签名/短签名 组合判定
+
+                    const isNoSign = !space.sign || space.sign.length < 5;
+                    // 擦边标题 + 空签名/短签名
                     if (!isAd && isSexyVideoTitle(videoTitle) && isNoSign) {
                         isAd = true;
                         console.log("[清剿] 擦边视频标题 + 空签名/短签名，判定为广告号");
                     }
-                    // 新增：低活跃 + 长期未更新视频 → 判定为广告号
+
+                    // 🆕 多条视频擦边比例检测（增强）
+                    if (!isAd && isNoSign && videoInfos.length >= 2) {
+                        const sexyCount = videoInfos.filter(v => isSexyVideoTitle(v.title)).length;
+                        if (sexyCount >= 1) {   // 如果多条视频中有至少1条擦边标题，且签名空/短，则判定为广告号
+                            isAd = true;
+                            console.log(`[清剿] 发现 ${sexyCount} 条擦边视频标题 + 空签名，判定为广告号`);
+                        }
+                    }
+
+                    // 低活跃 + 长期未更新（超过60天）
                     if (!isAd) {
-                        // 签名为空或过短，且视频发布距今超过60天
-                        
-                        // 超过60天未更新视频
                         const isStale = daysSinceLastVideo > 60;
                         if (isNoSign && isStale) {
                             isAd = true;
@@ -1075,7 +1079,7 @@
                 }
 
                 // 4. 完全空空间判定
-                if (!space.sign && !dynamic && !videoTitle) {
+                if (!space.sign && !dynamic && (!videoInfos || videoInfos.length === 0)) {
                     isAd = true;
                     details.empty = true;
                     console.log("[清剿] 空间为空，判定为广告号");
@@ -1362,6 +1366,7 @@
         if (item.element?.dataset?.adBlocked === "true") return;
         autoCleanQueue.push(item);
         updateAutoCleanPanel();
+        processAutoCleanQueue();
         console.log("[清剿] 自动入队:", item.name, "(Lv" + item.level + ")");
     }
 
@@ -1442,10 +1447,10 @@
             typeof window.AdDetector.analyze !== "function"
         )
             return;
-
-        const alreadyHasCleaner = el.dataset.adCleanerProcessed === "true";
-        const isUserMarked = el.dataset.adUserMarked === "true";
-        const alreadyBlocked = el.dataset.adBlocked === "true";
+        
+        const alreadyHasCleaner = el.dataset.adCleanerProcessed === "true"; // 已经处理过了，无论是展示按钮还是空间检测，都不重复处理
+        const isUserMarked = el.dataset.adUserMarked === "true"; // 用户手动标记的评论，优先展示按钮，不走空间检测
+        const alreadyBlocked = el.dataset.adBlocked === "true"; // 已经被拉黑了，不再展示按钮或进行空间检测
 
         if (alreadyHasCleaner || alreadyBlocked) {
             const alreadyHasMark = el.dataset.markBtnAdded === "true";
@@ -1460,20 +1465,21 @@
         }
         
         let score = 0;
-        if (isUserMarked) score = 100;
+        const hasStrongSignal = window.AdDetector.hasStrongAdSignals
+            ? window.AdDetector.hasStrongAdSignals(item.text)
+            : false;
+        if (isUserMarked || hasStrongSignal) score = 100;
         else
             score = await window.AdDetector.analyze({
                 content: item.text,
                 level: item.level,
                 avatarUrl: "",
                 features: features,
+                name: item.name,
             });
         
         const rawLevel = item.level;
         const isHighLevel = (rawLevel === null || rawLevel === undefined || rawLevel >= 4) || item.isVip === true;
-        const hasStrongSignal = window.AdDetector.hasStrongAdSignals
-            ? window.AdDetector.hasStrongAdSignals(item.text)
-            : false;
 
         // UP 主在自己视频下发带链接的置顶评论是正常行为，不能被 hasStrongSignal 直接拦截
         // 取视频 UP 主 UID：优先读 __INITIAL_STATE__，免去 API 请求
@@ -1492,11 +1498,8 @@
             (isUserMarked && isVideoOwner);
 
         if (score >= 40 || isUserMarked) {
-            // 命中强信号且不是 UP 主，或者用户手动标记且不是 UP 主：直接标记 
-            if (
-                (hasStrongSignal && !isVideoOwner) ||
-                (isUserMarked && !isVideoOwner)
-            ) {
+            // 视频 UP 主的强信号评论和用户标记的 UP 主评论优先展示按钮，不直接判定为广告，避免误伤正常置顶评论，但仍然需要空间复核来确认账号是否异常。
+            if ((hasStrongSignal && !isVideoOwner) || (isUserMarked && !isVideoOwner)) {
                 console.log(`[清剿] 用户'${item.name}'评论命中强信号${hasStrongSignal ? "(强信号)" : ""}${isUserMarked ? "(用户标记)" : ""}，直接判定为广告`);
                 showCleanerButton(item, el, isHighLevel, rawLevel);
                 if (!isHighLevel && !alreadyBlocked) enqueueAutoClean(item);
@@ -1629,11 +1632,12 @@
 
     // 依次处理自动清剿队列中的账号拉黑请求。
     async function processAutoCleanQueue() {
-        if (!autoCleanActive || autoCleanQueue.length === 0) {
+        if (!autoCleanActive || autoCleanQueue.length === 0 || isProcessing) {
             updateAutoCleanPanel();
             return;
         }
         const item = autoCleanQueue[0];
+        isProcessing = true;
         updateAutoCleanPanel();
         try {
             const jctMatch = document.cookie.match(
@@ -1683,9 +1687,13 @@
             autoCleanQueue.shift();
             updateAutoCleanPanel();
         } catch (err) {
-            console.error("[清剿] 自动清剿失败:", item.uid, err);
+            console.log("[清剿] 自动清剿失败:", item.uid, err);
             autoCleanQueue.shift();
             updateAutoCleanPanel();
+        } finally {
+            isProcessing = false;
+            // 处理完成后再次调度一次（确保队列不卡死）
+            if (autoCleanActive && autoCleanQueue.length) autoCleanTimer = setTimeout(processAutoCleanQueue, 1000);
         }
     }
 
@@ -1695,15 +1703,16 @@
         autoCleanActive = true;
         buildAutoCleanPanel();
         updateAutoCleanPanel();
-        autoCleanTimer = setInterval(processAutoCleanQueue, 1000);
+        // autoCleanTimer = setInterval(processAutoCleanQueue, 1000);
         console.log("[清剿] 自动清剿已启动");
+        processAutoCleanQueue();
     }
 
     // 停止自动清剿，但保留当前待处理队列。
     function stopAutoClean() {
         autoCleanActive = false;
         if (autoCleanTimer) {
-            clearInterval(autoCleanTimer);
+            clearTimeout(autoCleanTimer);
             autoCleanTimer = null;
         }
         if (autoCleanPanel) autoCleanPanel.style.display = "none";
@@ -1791,7 +1800,7 @@
         scanTimer = window.setTimeout(() => {
             scanTimer = null;
             scanAndMarkAllComments();
-        }, 50);
+        }, 300);
     }
 
     // 遍历当前根节点下的评论宿主，并继续向内监听其 Shadow DOM。
@@ -1872,12 +1881,13 @@
     async function waitForHost() {
         await initUserKeywords();
         await initBayesClassifier();
+        fetchWbiKeys(); // 提前获取一次 WBI keys，减少首次空间检测的延迟
         // await maybeClearUserKeywords(); // 新增：贝叶斯样本充足时清空词库
         if (getCommentsHost()) {
             startObservingShadow();
             return;
         }
-        const bodyObserver = new MutationObserver(() => {
+        bodyObserver = new MutationObserver(() => {
             if (getCommentsHost()) {
                 bodyObserver.disconnect();
                 startObservingShadow();
@@ -1886,6 +1896,7 @@
         bodyObserver.observe(document.body, { childList: true, subtree: true });
     }
 
+    // 主体入口：根据文档加载状态决定何时启动评论监控。
     if (
         document.readyState === "complete" ||
         document.readyState === "interactive"
@@ -1894,4 +1905,29 @@
     } else {
         window.addEventListener("load", waitForHost);
     }
+
+    // 页面卸载前清理定时器、队列和 DOM 变更监听，避免内存泄漏。
+    window.addEventListener('beforeunload', () => {
+        if (scanTimer) {
+            clearTimeout(scanTimer);
+            scanTimer = null;      // 保持与 scheduleFullScan 内逻辑一致
+        }
+        if (autoCleanTimer) {
+            clearTimeout(autoCleanTimer);
+            autoCleanTimer = null; // 与 stopAutoClean 保持一致
+        }
+        autoCleanQueue = [];
+        // 清理所有 observer（存储引用）
+        bodyObserver?.disconnect();
+        // 移除所有 panel
+        autoCleanPanel?.remove();
+        // 清除空间缓存
+        profileCache.clear();
+        pendingProfileChecks.clear();
+    });
+
+    
+    // test 测试用口暴露（仅供开发调试，正式版会移除）
+    // window.testExtractKeywords = extractKeywords;
+    // window.testGetAllCommentItems = getAllCommentItems;
 })();

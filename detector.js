@@ -7,9 +7,9 @@ const AdDetector = {
         [/威(?=信|号)/g, "微"],
         [/讯(?=息)|讯$/g, "信"],
         [/扣\s*扣|叩\s*叩/g, "QQ"],
-        // [/[Vv][Xx]|[Ww][Xx]/g, "微信"],
-        [/[Tt][Gg]\b/g, "Telegram"],
-        [/[Dd][Dd](\d)/g, "私信$1"],
+        // [/\b[Vv][Xx]|[Ww][Xx]\b/g, "微信"],
+        [/\b[Tt][Gg]\b/g, "Telegram"],
+        [/\b[Dd][Dd](\d)/g, "私信$1"],
         [/[Ａ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 65)],
         [/[ａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 97)],
         [/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248 + 48)],
@@ -34,9 +34,9 @@ const AdDetector = {
         { name: "利益诱导+行动", score: 35, regex: /(免费|白嫖|领取|干货|资源|教程|方法|攻略|资料|福利|礼包).{0,12}(私|戳|扣|加|点|来|滴滴|dd|关注|群)/i },
         { name: "虚假紧迫感", score: 20, regex: /(名额|位置|只剩|最后|马上|快要|就要|即将|错过|再等).{0,5}(了|！|\d)/i },
         { name: "虚假见证", score: 25, regex: /(我之前|我本来|我朋友|闺蜜|舍友|同学|室友|媳妇).{0,12}(不信|结果|真的|竟然|发现|亲测|跟着|才知道)/i },
-        { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|(?:扣\s*扣|q\s*q)\s*(?:群|号|\d+)|微\s*信|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
+        { name: "谐音规避", score: 40, regex: /[vV]\s*[我]?\s*\d|(?:扣\s*扣|q\s*q|加q|进q|入q)\s*(?:群|号|\d+)|微\s*信|群\s*号|[vV][xX][\s:：]?[a-zA-Z0-9_]/i },
         { name: "主页/私信引流", score: 30, regex: /(主页|空间|私聊|私信|简介|动态|链接).{0,5}(有|看|见|给|发|留|找)/i },
-        { name: "可疑链接参数", score: 45, regex: /[?&]share_[a-z0-9]{10,}|[^\s]{8,}\.cn\b/i },
+        { name: "可疑链接参数", score: 25, regex: /[?&]share_[a-z0-9]{10,}|[^\s]{8,}\.cn\b/i },
         { name: "可疑短链", score: 40, regex: /(b23\.tv|t\.cn|dwz\.cn|suo\.im|fx\.bz|mrw\.so|url\.cn|tb\.cn)/i },
         { name: "求资源索图", score: 30, regex: /(老师|楼主|up|作者|大佬).{0,4}(礼拿|礼貌拿|可以拿|求图|求原图|求资源|发一下|分享一下|可以发|发我|私发)/i },
         { name: "暗示离线获取", score: 20, regex: /(想要|求|蹲).{0,3}(表情包|壁纸|头像|资源|教程|工具)|(我.{0,2}也.{0,2}(要|求))/i },
@@ -52,8 +52,21 @@ const AdDetector = {
         { name: "截图抽奖", score: 25, regex: /(截图|保存|转发).{0,6}(抽奖|抽|中奖|送出|赠送)/i },
         { name: "私发课程资料", score: 30, regex: /(私发|私送|私聊领|私信.*?(课程|资料|文档|合集|整合|打包|合集))/i },
         { name: "无意义呼唤", score: 15, regex: /(?:我的)?(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?$|^给$/i },
-        { name: "情感暗示", score: 15, regex: /(小姑|小姨|姐姐|妹妹|寂寞|孤单|陪你|想你|等你|私聊|约|撩|骚)/i },
-        { name: "可疑外链", score: 40, regex: /https?:\/\/[^\s]*\.(top|xyz|club|tk|ml|ga|cf|click|link)\b/i }
+        { name: "情感暗示", score: 15, regex: /(小姑|小姨|姐姐|妹妹|寂寞|孤单|陪你|想你|等你|私聊|约|撩|骚|想要你陪我|超想[我家人]|谁想被踩|性感|夹腿摇|瑜伽裤|扭胯舞)/i },
+        { name: "可疑外链", score: 40, regex: /https?:\/\/[^\s]*\.(top|xyz|club|tk|ml|ga|cf|click|link)\b/i },
+        { name: "交友群聊", score: 30, regex: /交友[群裙峮羣]|[群裙峮羣]聊|聊天[群裙峮羣]|(?:交友|聊天)?qun(?:聊)?/i },
+        { name: "性暗示谐音（通用）", score: 40, regex: /(?:想|要|求|来|想被|求被|给|让我)(?:槽|艹|草|操|曹|肏|cao)(?:我|你|他|她|它|一下)?|(?:槽|艹|草|操|曹|肏|cao)(?:我|你|他|她|它|一下)|(?:莱|来)[秒給]|随时接dd|福fu|被打|我好想|辅助位.*射手位/i },
+        { name: "私信引流", score: 25, regex: /(?:需要|可以|支持|想要|求|找|有)?(?:私信|私心|私讯|私聊|私我|私密|丝信|丝心|思信)(?:我|哦|吧|一下|吗|呀|呢)?/i },
+        { name: "收费暗示", score: 20, regex: /不贵|不鬼|不跪|低价|底价|滴价|优惠|优汇|优会|折扣|折口|便宜|平价|廉价|划算|超值|特价|甩卖|口令|口(?:伶|另)|门槛|门(?:坎|砍|槛|滥|榄|栏)|不免费|收费\s*\d+/i },
+        { name: "索取/给予", score: 25, regex: /要就给|求给|可以给|私给/i },
+        { name: "特定短语", score: 15, regex: /想通了|说不上爱别说话|就一点喜欢|当一回好人/i },
+        { name: "纯数字串", score: 15, regex: /\b\d{6,10}\b(?!\d)/ },
+        { name: "纯表情包", score: 15, regex: /^\s*(\[[^\]]+\]\s*)+$/i },
+        { name: "性暗示缩写", score: 30, regex: /\bdd\b/i },   // 单独匹配 dd 作为单词
+        { name: "谐音引流-在动态里", score: 35, regex: /[在再洅氵载]\s*[动态动太凍]\s*[里理哩]/i },
+        { name: "作品链接+随机后缀", score: 45, regex: /https?:\/\/m\.bilibili\.com\/opus\/\d+(?:\s*(?:--|_|—|\s)+\s*\S+)?/i },
+        { name: "刷屏乱码广告", score: 40, regex: /(?:@[a-zA-Z0-9]+){3,}|(?:感谢哔哩哔哩[#￥@*\-]+){2,}|(?:谢谢谢谢|休息好好的你|新年快乐呀)|[#￥@*\-]{5,}/i },
+        { name: "性暗示谐音（狗狗）", score: 30, regex: /自己的(?:[奥好小])?[狗勾]{2}/i },
     ],
 
     highRiskKeywords: [
@@ -73,12 +86,12 @@ const AdDetector = {
 
     hasStrongAdSignals(text) {
         const t = this._normalize(text);
-        // 原有强信号 + 疑问式亲属呼唤
-        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|我的(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?\s*$|^给\s*$)/i.test(t);
+        // 原有强信号 + 新增群号、数字串、索取等
+        return /(微信|QQ群|Telegram|b23\.tv|加群|扫码|进群|私聊|→戳|点击链接|我的(?:爸爸|哥哥|妈妈|姐姐|妹妹)(?:呢|在哪|哪里|去哪)?\s*$|^给\s*$|群[：:]\s*\d{5,}|qq群\s*\d+|加q\s*\d+|要就给|求给|可以给|私给|\bby\s*[#\w\u4e00-\u9fa5]|https?:\/\/m\.bilibili\.com\/opus\/\d+(?:\s*[-\s_]+\s*\S+)?)/i.test(t);
     },
 
     // 规则评分 (0-100)
-    analyzeRule(text, level, avatarUrl) {
+    analyzeRule(text, level, avatarUrl, name) {
         let score = 0;
         const t = this._normalize(text || "");
         if (!t) return 0;
@@ -102,13 +115,28 @@ const AdDetector = {
         const emojiCount = (t.match(/[\p{Emoji}\u200d]/gu) || []).length;
         if (emojiCount > 2) score += 8;
 
+        // ========== 新增：昵称特殊判断 ==========
+        // 昵称模式：中文 + 至少5个字母数字（如“幸好有你多亏zovsgr”）
+        const isDirtyNickname = name && /[\u4e00-\u9fa5]+\w{5,}$/.test(name);
+        if (isDirtyNickname) score += 10;
+
+        // 短文本特殊处理：低等级账号，评论长度≤3，且为纯单中文、纯数字或纯标点
+        if (level !== undefined && level <= 3 && t.length <= 3) {
+            const isSingleChinese = /^[\u4e00-\u9fa5]$/.test(t);   // 单个中文字符
+            const isOnlyDigits = /^\d+$/.test(t);                 // 纯数字
+            const isOnlyPunctuation = /^[!?？。！…~]+$/.test(t);  // 纯标点符号（可扩展）
+            if (isSingleChinese || isOnlyDigits || isOnlyPunctuation) {
+                score += 20;
+            }
+        }
+
         return Math.min(score, 100);
     },
 
     // 最终评分（融合贝叶斯）
     async analyze(commentData) {
-        const { content, level, avatarUrl, features } = commentData;
-        const ruleScore = this.analyzeRule(content, level, avatarUrl);
+        const { content, level, avatarUrl, features, name } = commentData;
+        const ruleScore = this.analyzeRule(content, level, avatarUrl, name);
 
         // 如果贝叶斯分类器未就绪或样本不足，直接返回规则分
         if (!window.BayesClassifier || !window.BayesClassifier.isReady()) {

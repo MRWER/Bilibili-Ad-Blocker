@@ -5,6 +5,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const autoStatus = document.getElementById("autoStatus");
     const resetBtn = document.getElementById("resetBayesBtn");
 
+    // 设置版本号
+    const versionSpan = document.getElementById("version-placeholder");
+    if (versionSpan) {
+        const manifest = chrome.runtime.getManifest();
+        versionSpan.textContent = `v${manifest.version}`;
+    }
+
     let currentTabId = null;
 
     // 获取当前标签页并初始化
